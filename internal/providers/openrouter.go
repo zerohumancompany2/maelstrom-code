@@ -2,6 +2,7 @@ package providers
 
 import (
 	ctx "context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/comalice/inference_sketch/internal"
@@ -33,7 +34,32 @@ func (o *OpenRouterAPI) Send(i *context.InferenceBundle) (OpenRouterResponse, er
 		case internal.AssistantMessage:
 			messages = append(messages, openrouter.AssistantMessage(msg.Content))
 		case internal.ToolCallRequestMessage:
-			messages = append(messages, openrouter.AssistantMessage(msg.ToString()))
+			// Reconstruct proper assistant message WITH tool_calls
+			am := openrouter.AssistantMessage("")
+
+			argsStr := ""
+			switch v := msg.Arguments.(type) {
+			case string:
+				argsStr = v
+			case []byte:
+				argsStr = string(v)
+			case map[string]any:
+				b, _ := json.Marshal(v) // need import "encoding/json"
+				argsStr = string(b)
+			default:
+				b, _ := json.Marshal(v)
+				argsStr = string(b)
+			}
+
+			am.ToolCalls = append(am.ToolCalls, openrouter.ToolCall{
+				ID:   msg.ToolCallID,
+				Type: openrouter.ToolTypeFunction,
+				Function: openrouter.FunctionCall{ // or Function depending on exact lib version
+					Name:      msg.Name,
+					Arguments: argsStr,
+				},
+			})
+			messages = append(messages, am)
 		case internal.ToolCallResultMessage:
 			messages = append(messages, openrouter.ToolMessage(msg.ToolCallID, msg.Content))
 		default:
