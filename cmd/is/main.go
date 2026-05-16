@@ -15,27 +15,11 @@ import (
 func main() {
 	s := session.New()
 
-	// ctxDef := context.MarshalFromYAML("filepath")
+	reg := tools.NewRegistry(tools.WeatherTool{})
+
 	c := context.NewFromDefinition(context.ContextDefinition{
 		Model: "z-ai/glm-4.5-air:free",
-		// Model: "openrouter/free",
-		Tools: []internal.ToolDefinition{
-			{
-				Name:        "weather",
-				Description: "Get the latest weather for a location.",
-				Parameters: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"a": map[string]any{
-							"type":        "string",
-							"description": "location to query for",
-						},
-					},
-					"required":             []string{"a"},
-					"additionalProperties": false,
-				},
-			},
-		},
+		Tools: reg.Definitions(),
 	})
 
 	driver := providers.NewOpenRouter(os.Getenv("OPENROUTER_API_KEY"))
@@ -75,7 +59,7 @@ func main() {
 				fmt.Print(session.PrettyPrintItem(item))
 
 				if tc, ok := item.(internal.ToolCallRequestMessage); ok {
-					result := tools.Exec(tc)
+					result := tools.Dispatch(reg, tc)
 					s.Append(result)
 					hasToolCalls = true
 				}
