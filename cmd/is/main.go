@@ -72,7 +72,7 @@ func main() {
 			for _, item := range respItems {
 				s.Append(item)
 
-				fmt.Println(item)
+				fmt.Print(session.PrettyPrintItem(item))
 
 				if tc, ok := item.(internal.ToolCallRequestMessage); ok {
 					result := tools.Exec(tc)

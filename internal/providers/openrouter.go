@@ -32,7 +32,9 @@ func (o *OpenRouterAPI) Send(i *context.InferenceBundle) (OpenRouterResponse, er
 		case internal.SystemMessage:
 			messages = append(messages, openrouter.SystemMessage(msg.Content))
 		case internal.AssistantMessage:
-			messages = append(messages, openrouter.AssistantMessage(msg.Content))
+			am := openrouter.AssistantMessage(msg.Content)
+			am.Reasoning = &msg.Reasoning
+			messages = append(messages, am)
 		case internal.ToolCallRequestMessage:
 			// Reconstruct proper assistant message WITH tool_calls
 			am := openrouter.AssistantMessage("")

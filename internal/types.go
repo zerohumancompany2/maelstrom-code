@@ -15,7 +15,8 @@ type UserMessage struct {
 func (um UserMessage) isSessionItem() bool { return true }
 
 type AssistantMessage struct {
-	Content string
+	Content   string
+	Reasoning string
 }
 
 func (am AssistantMessage) isSessionItem() bool { return true }
@@ -42,15 +43,6 @@ type ToolCallResultMessage struct {
 }
 
 func (tcrm ToolCallResultMessage) isSessionItem() bool { return true }
-
-type ToolDefinitionMessage struct {
-	Name        string
-	Description string
-	Parameters  map[string]any
-	Strict      bool
-}
-
-func (tdm ToolDefinitionMessage) isSessionItem() bool { return true }
 
 /// TOOL DEFINITIONS
 
