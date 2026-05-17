@@ -6,24 +6,21 @@ import (
 )
 
 type ContextMap struct {
-	Model string // placeholder until we get proper definitions
-	Tools []internal.ToolDefinition
+	Model      string // placeholder until we get proper definitions
+	Tools      []internal.ToolDefinition
+	Definition ContextDefinition
 }
 
 func (c *ContextMap) BuildInferenceBundle(s session.Session) (InferenceBundle, error) {
-	chunks := []internal.SessionItem{} // lift to ContextChunk
+	var messages []internal.SessionItem
 
-	for _, chunk := range s.Items {
-		chunks = append(chunks, chunk)
+	for _, chunk := range c.Definition.Chunks {
+		messages = append(messages, chunk.Build(s)...)
 	}
 
 	return InferenceBundle{
 		Model:    c.Model,
-		Messages: chunks,
+		Messages: messages,
 		Tools:    c.Tools,
 	}, nil
-}
-
-func NewFromDefinition(cd ContextDefinition) ContextMap {
-	return ContextMap{Model: cd.Model, Tools: cd.Tools}
 }

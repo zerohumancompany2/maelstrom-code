@@ -18,8 +18,12 @@ func main() {
 	reg := tools.NewRegistry(tools.WeatherTool{})
 
 	c := context.NewFromDefinition(context.ContextDefinition{
-		Model: "z-ai/glm-4.5-air:free",
-		Tools: reg.Definitions(),
+		Model: "z-ai/glm-4.5-air:free", // TODO lift to Agent struct
+		Tools: reg.Definitions(),       // TODO lift to Agent struct
+		Chunks: []context.ContextChunk{
+			context.SystemChunk{},
+			context.MessagesChunk{},
+		},
 	})
 
 	driver := providers.NewOpenRouter(os.Getenv("OPENROUTER_API_KEY"))

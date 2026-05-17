@@ -23,7 +23,14 @@ func TestBuildInferenceBundleEmpty(t *testing.T) {
 
 // 3.2: All session items appear in bundle
 func TestBuildInferenceBundleFidelity(t *testing.T) {
-	cm := ContextMap{Model: "test-model"}
+	cm := ContextMap{
+		Model: "test-model",
+		Definition: ContextDefinition{
+			Chunks: []ContextChunk{
+				MessagesChunk{},
+			},
+		},
+	}
 	s := session.New()
 	s.Append(session.NewUserMessage("first"))
 	s.Append(session.NewUserMessage("second"))

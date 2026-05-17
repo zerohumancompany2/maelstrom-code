@@ -44,9 +44,7 @@ func BuildRequest(i *context.InferenceBundle) openrouter.ChatCompletionRequest {
 
 // ConvertMessages converts internal session items into openrouter messages.
 func ConvertMessages(items []internal.SessionItem) []openrouter.ChatCompletionMessage {
-	messages := []openrouter.ChatCompletionMessage{
-		openrouter.SystemMessage("You are a helpful assistant."),
-	}
+	messages := []openrouter.ChatCompletionMessage{}
 
 	for _, item := range items {
 		messages = append(messages, ConvertItem(item))
