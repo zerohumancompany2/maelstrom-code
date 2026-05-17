@@ -153,7 +153,11 @@ func TestBuildRequestModel(t *testing.T) {
 		Model:    "my-model",
 		Messages: []internal.SessionItem{},
 	}
-	req := BuildRequest(bundle)
+
+	req, err := BuildRequest(bundle)
+	if err != nil {
+		t.Errorf("Failed to build request %v", err)
+	}
 
 	if req.Model != "my-model" {
 		t.Errorf("Model = %q, want %q", req.Model, "my-model")

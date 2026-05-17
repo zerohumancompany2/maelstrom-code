@@ -10,8 +10,6 @@ import (
 	"github.com/revrost/go-openrouter"
 )
 
-type OpenRouterToolCallRequest struct{}
-
 type OpenRouterAPI struct {
 	client openrouter.Client
 }
@@ -21,25 +19,34 @@ type OpenRouterResponse struct {
 }
 
 func (o *OpenRouterAPI) Send(i *context.InferenceBundle) (ProviderResponse, error) {
-	req := BuildRequest(i)
+	req, err := BuildRequest(i)
+
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
 
 	resp, err := o.client.CreateChatCompletion(ctx.Background(), req)
 	if err != nil {
-		fmt.Printf("ChatCompletion error: %v\n", err)
-		return nil, err
+		return nil, fmt.Errorf("openrouter chat completion: %w", err)
 	}
 
 	return &OpenRouterResponse{Raw: &resp}, nil
 }
 
 // BuildRequest converts an InferenceBundle into an openrouter ChatCompletionRequest.
-func BuildRequest(i *context.InferenceBundle) openrouter.ChatCompletionRequest {
+func BuildRequest(i *context.InferenceBundle) (openrouter.ChatCompletionRequest, error) {
+	messages := make([]openrouter.ChatCompletionMessage, 0, len(i.Messages))
+
+	for _, item := range i.Messages {
+		messages = append(messages, ConvertItem(item))
+	}
+
 	return openrouter.ChatCompletionRequest{
 		Model:       i.Model,
 		Messages:    ConvertMessages(i.Messages),
 		Tools:       ToOpenRouterTools(i.Tools...),
 		Temperature: 0.7,
-	}
+	}, nil
 }
 
 // ConvertMessages converts internal session items into openrouter messages.
@@ -69,7 +76,7 @@ func ConvertItem(item internal.SessionItem) openrouter.ChatCompletionMessage {
 	case internal.ToolCallResultMessage:
 		return openrouter.ToolMessage(msg.ToolCallID, msg.Content)
 	default:
-		return openrouter.UserMessage("")
+		panic(fmt.Sprintf("ConvertItem: unknown session item type %T", item))
 	}
 }
 
@@ -98,7 +105,10 @@ func serializeArguments(args any) string {
 	case []byte:
 		return string(v)
 	case map[string]any:
-		b, _ := json.Marshal(v)
+		b, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf(`{"__serialize_error": failed to marshall arguments: %v"}`, err)
+		}
 		return string(b)
 	default:
 		b, _ := json.Marshal(v)

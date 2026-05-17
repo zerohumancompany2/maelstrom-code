@@ -15,7 +15,11 @@ func (c *ContextMap) BuildInferenceBundle(s session.Session) (InferenceBundle, e
 	var messages []internal.SessionItem
 
 	for _, chunk := range c.Definition.Chunks {
-		messages = append(messages, chunk.Build(s)...)
+		builtChunk, err := chunk.Build(s)
+		if err != nil {
+			return InferenceBundle{}, err
+		}
+		messages = append(messages, builtChunk...)
 	}
 
 	return InferenceBundle{

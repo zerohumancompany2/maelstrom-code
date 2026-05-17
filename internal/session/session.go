@@ -14,16 +14,14 @@ func New() Session {
 	return Session{}
 }
 
-func (s *Session) Append(i internal.SessionItem) error {
+func (s *Session) Append(i internal.SessionItem) {
 	s.Items = append(s.Items, i)
-	return nil
 }
 
-func (s *Session) AppendMany(i ...internal.SessionItem) error {
+func (s *Session) AppendMany(i ...internal.SessionItem) {
 	for _, item := range i {
 		s.Items = append(s.Items, item)
 	}
-	return nil
 }
 
 func (s *Session) PrettyPrintAll() string {

@@ -42,11 +42,13 @@ func main() {
 		for {
 			bundle, err := c.BuildInferenceBundle(s)
 			if err != nil {
+				fmt.Fprintf(os.Stderr, "BuildInferenceBundle error: %v\n", err)
 				panic(-1)
 			}
 
 			resp, err := driver.Send(&bundle)
 			if err != nil {
+				fmt.Fprintf(os.Stderr, "Provider error: %v\n", err)
 				panic(-1)
 			}
 
