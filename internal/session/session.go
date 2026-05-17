@@ -52,13 +52,13 @@ func PrettyPrintItem(si internal.SessionItem) string {
 	case internal.UserMessage:
 		return v.Content
 	case internal.AssistantMessage:
-		return fmt.Sprintf("Reasoning: %v\nAssistant: %v\n", v.Reasoning, v.Content)
+		return fmt.Sprintf("Reasoning: %v\nAssistant: %v", v.Reasoning, v.Content)
 	case internal.ToolCallRequestMessage:
-		return fmt.Sprintf("Tool Call Request:\n\t%v\n\t%v\n\t%v\n", v.Name, v.ToolCallID, v.Arguments)
+		return fmt.Sprintf("Tool Call Request:\n\tName: %v\n\tID: %v\n\tArgs: %v", v.Name, v.ToolCallID, v.Arguments)
 	case internal.SystemMessage:
 		return v.Content
 	case internal.ToolCallResultMessage:
-		return fmt.Sprintf("Tool Call Result:\n\t%v\n\t%v", v.ToolCallID, v.Content)
+		return fmt.Sprintf("Tool Call Result:\n\tID: %v\n\tContent: %v", v.ToolCallID, v.Content)
 	default:
 		return ""
 	}

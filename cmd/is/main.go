@@ -29,9 +29,7 @@ func main() {
 	driver := providers.NewOpenRouter(os.Getenv("OPENROUTER_API_KEY"))
 
 	for {
-		// var input string
 		fmt.Print(">>> ")
-		// fmt.Scanln(&input)
 
 		scanner := bufio.NewScanner(os.Stdin)
 		scanner.Scan()
@@ -60,11 +58,12 @@ func main() {
 			for _, item := range respItems {
 				s.Append(item)
 
-				fmt.Print(session.PrettyPrintItem(item))
+				fmt.Println(session.PrettyPrintItem(item))
 
 				if tc, ok := item.(internal.ToolCallRequestMessage); ok {
 					result := tools.Dispatch(reg, tc)
 					s.Append(result)
+					fmt.Println(session.PrettyPrintItem(result))
 					hasToolCalls = true
 				}
 			}
