@@ -9,11 +9,18 @@ type ContextChunk interface {
 	Build(s session.Session) ([]internal.SessionItem, error)
 }
 
-type SystemChunk struct{}
+type SystemChunk struct {
+	Prompt string
+}
 
 func (sc SystemChunk) Build(s session.Session) ([]internal.SessionItem, error) {
+	prompt := sc.Prompt
+	if prompt == "" {
+		prompt = "You are a helpful assistant." // TODO lift validation
+	}
+
 	return []internal.SessionItem{
-		internal.SystemMessage{Content: "You are a helpful assistant."},
+		internal.SystemMessage{Content: prompt},
 	}, nil
 }
 

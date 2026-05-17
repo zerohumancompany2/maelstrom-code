@@ -10,21 +10,33 @@ import (
 	"github.com/comalice/inference_sketch/internal/providers"
 	"github.com/comalice/inference_sketch/internal/session"
 	"github.com/comalice/inference_sketch/internal/tools"
+	"github.com/comalice/inference_sketch/internal/yaml"
 )
 
 func main() {
 	s := session.New()
 
+	agent, err := yaml.UnmarshalYAMLToAgent(`id: weather-assistant-v1
+name: Weather Assistant
+version: "1.0.0"
+description: Reliable weather lookup
+
+model:
+  name: "z-ai/glm-4.5-air:free"
+  provider: "openrouter"
+  contextLength: 32768
+  temperature: 0.7
+
+systemPrompt: |
+  You are a cheerful, accurate weather assistant.
+  Always respond in Celsius. Be concise and friendly.`)
+	if err != nil {
+		panic(err)
+	}
+
 	reg := tools.NewRegistry(tools.WeatherTool{})
 
-	c := context.NewFromDefinition(context.ContextDefinition{
-		Model: "z-ai/glm-4.5-air:free", // TODO lift to Agent struct
-		Tools: reg.Definitions(),       // TODO lift to Agent struct
-		Chunks: []context.ContextChunk{
-			context.SystemChunk{},
-			context.MessagesChunk{},
-		},
-	})
+	c := context.NewFromDefinition(agent.BuildContextDefinition(reg))
 
 	driver := providers.NewOpenRouter(os.Getenv("OPENROUTER_API_KEY"))
 
