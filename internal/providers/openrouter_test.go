@@ -4,18 +4,19 @@ import (
 	"testing"
 
 	"github.com/comalice/inference_sketch/internal"
-	"github.com/comalice/inference_sketch/internal/context"
 	"github.com/revrost/go-openrouter"
 )
 
 // Fake provider for integration-style tests
 type FakeProvider struct {
-	LastBundle *context.InferenceBundle
-	Response   []internal.SessionItem
+	LastMessages []internal.SessionItem
+	LastOpts     ProviderOptions
+	Response     []internal.SessionItem
 }
 
-func (f *FakeProvider) Send(b *context.InferenceBundle) (ProviderResponse, error) {
-	f.LastBundle = b
+func (f *FakeProvider) Send(messages []internal.SessionItem, opts ProviderOptions) (ProviderResponse, error) {
+	f.LastMessages = messages
+	f.LastOpts = opts
 	return fakeResponse{items: f.Response}, nil
 }
 
@@ -149,15 +150,7 @@ func TestSerializeArgumentsMap(t *testing.T) {
 
 // 4.7: BuildRequest propagates model name
 func TestBuildRequestModel(t *testing.T) {
-	bundle := &context.InferenceBundle{
-		Model:    "my-model",
-		Messages: []internal.SessionItem{},
-	}
-
-	req, err := BuildRequest(bundle)
-	if err != nil {
-		t.Errorf("Failed to build request %v", err)
-	}
+	req := BuildRequest([]internal.SessionItem{}, ProviderOptions{Model: "my-model"})
 
 	if req.Model != "my-model" {
 		t.Errorf("Model = %q, want %q", req.Model, "my-model")

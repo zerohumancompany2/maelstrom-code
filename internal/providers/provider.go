@@ -4,15 +4,21 @@ import (
 	"fmt"
 
 	"github.com/comalice/inference_sketch/internal"
-	"github.com/comalice/inference_sketch/internal/context"
 )
+
+// ProviderOptions carries per-request configuration (model, temperature, tools).
+type ProviderOptions struct {
+	Model       string
+	Temperature float64
+	Tools       []internal.ToolDefinition
+}
 
 type ProviderResponse interface {
 	ToSessionItems() []internal.SessionItem
 }
 
 type Provider interface {
-	Send(*context.InferenceBundle) (ProviderResponse, error)
+	Send(messages []internal.SessionItem, opts ProviderOptions) (ProviderResponse, error)
 }
 
 func GetProviderByName(n string) (Provider, error) {

@@ -52,13 +52,16 @@ systemPrompt: |
 		s.Append(session.NewUserMessage(scanner.Text()))
 
 		for {
-			bundle, err := c.BuildInferenceBundle(s)
+			messages, err := c.BuildMessages(s)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "BuildInferenceBundle error: %v\n", err)
 				panic(-1)
 			}
 
-			resp, err := driver.Send(&bundle)
+			resp, err := driver.Send(messages, providers.ProviderOptions{
+				Model: c.Model,
+				Tools: c.Tools,
+			})
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Provider error: %v\n", err)
 				panic(-1)

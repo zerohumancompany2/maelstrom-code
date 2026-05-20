@@ -7,22 +7,22 @@ import (
 	"github.com/comalice/inference_sketch/internal/session"
 )
 
-// 3.1: Empty session → empty message bundle
-func TestBuildInferenceBundleEmpty(t *testing.T) {
+// 3.1: Empty session → empty messages
+func TestBuildMessagesEmpty(t *testing.T) {
 	cm := ContextMap{Model: "test-model"}
 	s := session.New()
 
-	bundle, err := cm.BuildInferenceBundle(s)
+	messages, err := cm.BuildMessages(s)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(bundle.Messages) != 0 {
-		t.Errorf("got %d messages, want 0", len(bundle.Messages))
+	if len(messages) != 0 {
+		t.Errorf("got %d messages, want 0", len(messages))
 	}
 }
 
-// 3.2: All session items appear in bundle
-func TestBuildInferenceBundleFidelity(t *testing.T) {
+// 3.2: All session items appear in messages
+func TestBuildMessagesFidelity(t *testing.T) {
 	cm := ContextMap{
 		Model: "test-model",
 		Definition: ContextDefinition{
@@ -35,37 +35,16 @@ func TestBuildInferenceBundleFidelity(t *testing.T) {
 	s.Append(session.NewUserMessage("first"))
 	s.Append(session.NewUserMessage("second"))
 
-	bundle, err := cm.BuildInferenceBundle(s)
+	messages, err := cm.BuildMessages(s)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(bundle.Messages) != 2 {
-		t.Fatalf("got %d messages, want 2", len(bundle.Messages))
+	if len(messages) != 2 {
+		t.Fatalf("got %d messages, want 2", len(messages))
 	}
 }
 
-// 3.3: Bundle.Model and Bundle.Tools propagate
-func TestBuildInferenceBundlePropagatesConfig(t *testing.T) {
-	tool := internal.ToolDefinition{Name: "weather"}
-	cm := ContextMap{Model: "my-model", Tools: []internal.ToolDefinition{tool}}
-	s := session.New()
-
-	bundle, err := cm.BuildInferenceBundle(s)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if bundle.Model != "my-model" {
-		t.Errorf("Model = %q, want %q", bundle.Model, "my-model")
-	}
-	if len(bundle.Tools) != 1 {
-		t.Fatalf("got %d tools, want 1", len(bundle.Tools))
-	}
-	if bundle.Tools[0].Name != "weather" {
-		t.Errorf("Tools[0].Name = %q, want %q", bundle.Tools[0].Name, "weather")
-	}
-}
-
-// 3.4: NewFromDefinition copies, doesn't alias
+// 3.3: NewFromDefinition copies, doesn't alias
 func TestNewFromDefinitionNoAlias(t *testing.T) {
 	cd := ContextDefinition{
 		Model: "original",

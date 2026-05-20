@@ -11,20 +11,16 @@ type ContextMap struct {
 	Definition ContextDefinition
 }
 
-func (c *ContextMap) BuildInferenceBundle(s session.Session) (InferenceBundle, error) {
+func (c *ContextMap) BuildMessages(s session.Session) ([]internal.SessionItem, error) {
 	var messages []internal.SessionItem
 
 	for _, chunk := range c.Definition.Chunks {
 		builtChunk, err := chunk.Build(s)
 		if err != nil {
-			return InferenceBundle{}, err
+			return nil, err
 		}
 		messages = append(messages, builtChunk...)
 	}
 
-	return InferenceBundle{
-		Model:    c.Model,
-		Messages: messages,
-		Tools:    c.Tools,
-	}, nil
+	return messages, nil
 }

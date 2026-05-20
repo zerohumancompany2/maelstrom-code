@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/comalice/inference_sketch/internal"
-	"github.com/comalice/inference_sketch/internal/context"
 	"github.com/revrost/go-openrouter"
 )
 
@@ -18,12 +17,8 @@ type OpenRouterResponse struct {
 	Raw *openrouter.ChatCompletionResponse
 }
 
-func (o *OpenRouterAPI) Send(i *context.InferenceBundle) (ProviderResponse, error) {
-	req, err := BuildRequest(i)
-
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
+func (o *OpenRouterAPI) Send(messages []internal.SessionItem, opts ProviderOptions) (ProviderResponse, error) {
+	req := BuildRequest(messages, opts)
 
 	resp, err := o.client.CreateChatCompletion(ctx.Background(), req)
 	if err != nil {
@@ -33,20 +28,14 @@ func (o *OpenRouterAPI) Send(i *context.InferenceBundle) (ProviderResponse, erro
 	return &OpenRouterResponse{Raw: &resp}, nil
 }
 
-// BuildRequest converts an InferenceBundle into an openrouter ChatCompletionRequest.
-func BuildRequest(i *context.InferenceBundle) (openrouter.ChatCompletionRequest, error) {
-	messages := make([]openrouter.ChatCompletionMessage, 0, len(i.Messages))
-
-	for _, item := range i.Messages {
-		messages = append(messages, ConvertItem(item))
-	}
-
+// BuildRequest converts messages and options into an openrouter ChatCompletionRequest.
+func BuildRequest(messages []internal.SessionItem, opts ProviderOptions) openrouter.ChatCompletionRequest {
 	return openrouter.ChatCompletionRequest{
-		Model:       i.Model,
-		Messages:    ConvertMessages(i.Messages),
-		Tools:       ToOpenRouterTools(i.Tools...),
+		Model:       opts.Model,
+		Messages:    ConvertMessages(messages),
+		Tools:       ToOpenRouterTools(opts.Tools...),
 		Temperature: 0.7,
-	}, nil
+	}
 }
 
 // ConvertMessages converts internal session items into openrouter messages.
