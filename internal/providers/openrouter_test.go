@@ -1,20 +1,22 @@
 package providers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/comalice/inference_sketch/internal"
+	icontext "github.com/comalice/inference_sketch/internal/context"
 	"github.com/revrost/go-openrouter"
 )
 
 // Fake provider for integration-style tests
 type FakeProvider struct {
-	LastMessages []internal.SessionItem
+	LastMessages []icontext.ContextItem
 	LastOpts     ProviderOptions
 	Response     []internal.SessionItem
 }
 
-func (f *FakeProvider) Send(messages []internal.SessionItem, opts ProviderOptions) (ProviderResponse, error) {
+func (f *FakeProvider) Send(messages []icontext.ContextItem, opts ProviderOptions) (ProviderResponse, error) {
 	f.LastMessages = messages
 	f.LastOpts = opts
 	return fakeResponse{items: f.Response}, nil
@@ -26,18 +28,17 @@ type fakeResponse struct {
 
 func (f fakeResponse) ToSessionItems() []internal.SessionItem { return f.items }
 
-// Compile-time: OpenRouterAPI implements Provider
 var _ Provider = (*OpenRouterAPI)(nil)
-
-// Compile-time: *OpenRouterResponse implements ProviderResponse
 var _ ProviderResponse = (*OpenRouterResponse)(nil)
 
-// ─── Seam 4: Send conversion ───
+type unsupportedContextItem struct{ icontext.ContextItem }
 
-// 4.1: ConvertItem converts UserMessage
 func TestConvertItemUserMessage(t *testing.T) {
-	item := internal.UserMessage{Content: "hello"}
-	got := ConvertItem(item)
+	item := icontext.ContextUserMessage{Content: "hello"}
+	got, err := ConvertItem(item)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if got.Role != "user" {
 		t.Errorf("Role = %q, want %q", got.Role, "user")
@@ -47,10 +48,12 @@ func TestConvertItemUserMessage(t *testing.T) {
 	}
 }
 
-// 4.2: ConvertItem converts AssistantMessage with reasoning
 func TestConvertItemAssistantWithReasoning(t *testing.T) {
-	item := internal.AssistantMessage{Content: "answer", Reasoning: "I thought"}
-	got := ConvertItem(item)
+	item := icontext.ContextAssistantMessage{Content: "answer", Reasoning: "I thought"}
+	got, err := ConvertItem(item)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if got.Role != "assistant" {
 		t.Errorf("Role = %q, want %q", got.Role, "assistant")
@@ -63,14 +66,16 @@ func TestConvertItemAssistantWithReasoning(t *testing.T) {
 	}
 }
 
-// 4.3: ConvertItem converts ToolCallRequestMessage
 func TestConvertItemToolCallRequest(t *testing.T) {
-	item := internal.ToolCallRequestMessage{
+	item := icontext.ContextToolCallRequestMessage{
 		ToolCallID: "c1",
 		Name:       "weather",
 		Arguments:  `{"a":"london"}`,
 	}
-	got := ConvertItem(item)
+	got, err := ConvertItem(item)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if got.Role != "assistant" {
 		t.Errorf("Role = %q, want %q", got.Role, "assistant")
@@ -87,13 +92,15 @@ func TestConvertItemToolCallRequest(t *testing.T) {
 	}
 }
 
-// 4.4: ConvertItem converts ToolCallResultMessage
 func TestConvertItemToolCallResult(t *testing.T) {
-	item := internal.ToolCallResultMessage{
+	item := icontext.ContextToolCallResultMessage{
 		ToolCallID: "c1",
 		Content:    "sunny",
 	}
-	got := ConvertItem(item)
+	got, err := ConvertItem(item)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if got.Role != "tool" {
 		t.Errorf("Role = %q, want %q", got.Role, "tool")
@@ -103,11 +110,8 @@ func TestConvertItemToolCallResult(t *testing.T) {
 	}
 }
 
-// 4.5: ToOpenRouterTools converts definitions
 func TestToOpenRouterTools(t *testing.T) {
-	defs := []internal.ToolDefinition{
-		{Name: "weather", Description: "get weather", Strict: true},
-	}
+	defs := []internal.ToolDefinition{{Name: "weather", Description: "get weather", Strict: true}}
 	got := ToOpenRouterTools(defs...)
 
 	if len(got) != 1 {
@@ -124,7 +128,6 @@ func TestToOpenRouterTools(t *testing.T) {
 	}
 }
 
-// 4.6a: serializeArguments handles string
 func TestSerializeArgumentsString(t *testing.T) {
 	got := serializeArguments(`{"a":"b"}`)
 	if got != `{"a":"b"}` {
@@ -132,7 +135,6 @@ func TestSerializeArgumentsString(t *testing.T) {
 	}
 }
 
-// 4.6b: serializeArguments handles []byte
 func TestSerializeArgumentsBytes(t *testing.T) {
 	got := serializeArguments([]byte(`{"a":"b"}`))
 	if got != `{"a":"b"}` {
@@ -140,7 +142,6 @@ func TestSerializeArgumentsBytes(t *testing.T) {
 	}
 }
 
-// 4.6c: serializeArguments handles map
 func TestSerializeArgumentsMap(t *testing.T) {
 	got := serializeArguments(map[string]any{"a": "b"})
 	if got != `{"a":"b"}` {
@@ -148,34 +149,58 @@ func TestSerializeArgumentsMap(t *testing.T) {
 	}
 }
 
-// 4.7: BuildRequest propagates model name
 func TestBuildRequestModel(t *testing.T) {
-	req := BuildRequest([]internal.SessionItem{}, ProviderOptions{Model: "my-model"})
-
+	req, err := BuildRequest([]icontext.ContextItem{}, ProviderOptions{Model: "my-model"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if req.Model != "my-model" {
 		t.Errorf("Model = %q, want %q", req.Model, "my-model")
 	}
 }
 
-// ─── Seam 5: Response to SessionItems ───
+func TestConvertItemUnsupportedType(t *testing.T) {
+	_, err := ConvertItem(unsupportedContextItem{})
+	if err == nil {
+		t.Fatal("expected error for unsupported context item type")
+	}
+}
 
-// Helper: build a minimal OpenRouterResponse with controlled fields
+func TestConvertMessagesUnsupportedType(t *testing.T) {
+	_, err := ConvertMessages([]icontext.ContextItem{unsupportedContextItem{}})
+	if err == nil {
+		t.Fatal("expected error for unsupported context item slice")
+	}
+}
+
+func TestBuildRequestUnsupportedType(t *testing.T) {
+	_, err := BuildRequest([]icontext.ContextItem{unsupportedContextItem{}}, ProviderOptions{Model: "my-model"})
+	if err == nil {
+		t.Fatal("expected error for unsupported context item during request build")
+	}
+}
+
+func TestOpenRouterSendReturnsBuildRequestError(t *testing.T) {
+	api := OpenRouterAPI{}
+
+	_, err := api.Send([]icontext.ContextItem{unsupportedContextItem{}}, ProviderOptions{Model: "my-model"})
+	if err == nil {
+		t.Fatal("expected Send to return build-request error")
+	}
+	if !strings.Contains(err.Error(), "unsupported type") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func newTestResponse(content string, reasoning *string, toolCalls []openrouter.ToolCall) OpenRouterResponse {
 	msg := openrouter.ChatCompletionMessage{
 		Content:   openrouter.Content{Text: content},
 		Reasoning: reasoning,
 		ToolCalls: toolCalls,
 	}
-	return OpenRouterResponse{
-		Raw: &openrouter.ChatCompletionResponse{
-			Choices: []openrouter.ChatCompletionChoice{
-				{Message: msg},
-			},
-		},
-	}
+	return OpenRouterResponse{Raw: &openrouter.ChatCompletionResponse{Choices: []openrouter.ChatCompletionChoice{{Message: msg}}}}
 }
 
-// 5.1: Nil response → nil items
 func TestToSessionItemsNilResponse(t *testing.T) {
 	resp := OpenRouterResponse{}
 	items := resp.ToSessionItems()
@@ -184,7 +209,6 @@ func TestToSessionItemsNilResponse(t *testing.T) {
 	}
 }
 
-// 5.2: Empty choices → nil items
 func TestToSessionItemsEmptyChoices(t *testing.T) {
 	resp := OpenRouterResponse{Raw: &openrouter.ChatCompletionResponse{}}
 	items := resp.ToSessionItems()
@@ -193,7 +217,6 @@ func TestToSessionItemsEmptyChoices(t *testing.T) {
 	}
 }
 
-// 5.3: Plain text → single AssistantMessage
 func TestToSessionItemsPlainText(t *testing.T) {
 	resp := newTestResponse("hello world", nil, nil)
 	items := resp.ToSessionItems()
@@ -210,7 +233,6 @@ func TestToSessionItemsPlainText(t *testing.T) {
 	}
 }
 
-// 5.4: Text + reasoning → AssistantMessage with both fields
 func TestToSessionItemsWithReasoning(t *testing.T) {
 	reasoning := "I thought about it"
 	resp := newTestResponse("answer", &reasoning, nil)
@@ -228,11 +250,8 @@ func TestToSessionItemsWithReasoning(t *testing.T) {
 	}
 }
 
-// 5.5: Tool calls → ToolCallRequestMessages
 func TestToSessionItemsToolCalls(t *testing.T) {
-	resp := newTestResponse("", nil, []openrouter.ToolCall{
-		{ID: "c1", Function: openrouter.FunctionCall{Name: "weather", Arguments: "{}"}},
-	})
+	resp := newTestResponse("", nil, []openrouter.ToolCall{{ID: "c1", Function: openrouter.FunctionCall{Name: "weather", Arguments: "{}"}}})
 	items := resp.ToSessionItems()
 
 	if len(items) != 1 {
@@ -247,11 +266,8 @@ func TestToSessionItemsToolCalls(t *testing.T) {
 	}
 }
 
-// 5.6: Tool calls only, no text → no empty AssistantMessage
 func TestToSessionItemsToolCallsNoText(t *testing.T) {
-	resp := newTestResponse("", nil, []openrouter.ToolCall{
-		{ID: "c1", Function: openrouter.FunctionCall{Name: "weather", Arguments: "{}"}},
-	})
+	resp := newTestResponse("", nil, []openrouter.ToolCall{{ID: "c1", Function: openrouter.FunctionCall{Name: "weather", Arguments: "{}"}}})
 	items := resp.ToSessionItems()
 
 	if len(items) != 1 {
@@ -263,7 +279,6 @@ func TestToSessionItemsToolCallsNoText(t *testing.T) {
 	}
 }
 
-// 5.7: Multiple tool calls → correct count
 func TestToSessionItemsMultipleToolCalls(t *testing.T) {
 	resp := newTestResponse("", nil, []openrouter.ToolCall{
 		{ID: "c1", Function: openrouter.FunctionCall{Name: "weather", Arguments: "{}"}},

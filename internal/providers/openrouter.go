@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/comalice/inference_sketch/internal"
+	icontext "github.com/comalice/inference_sketch/internal/context"
 	"github.com/revrost/go-openrouter"
 )
 
@@ -17,8 +18,11 @@ type OpenRouterResponse struct {
 	Raw *openrouter.ChatCompletionResponse
 }
 
-func (o *OpenRouterAPI) Send(messages []internal.SessionItem, opts ProviderOptions) (ProviderResponse, error) {
-	req := BuildRequest(messages, opts)
+func (o *OpenRouterAPI) Send(messages []icontext.ContextItem, opts ProviderOptions) (ProviderResponse, error) {
+	req, err := BuildRequest(messages, opts)
+	if err != nil {
+		return nil, err
+	}
 
 	resp, err := o.client.CreateChatCompletion(ctx.Background(), req)
 	if err != nil {
@@ -29,49 +33,58 @@ func (o *OpenRouterAPI) Send(messages []internal.SessionItem, opts ProviderOptio
 }
 
 // BuildRequest converts messages and options into an openrouter ChatCompletionRequest.
-func BuildRequest(messages []internal.SessionItem, opts ProviderOptions) openrouter.ChatCompletionRequest {
+func BuildRequest(messages []icontext.ContextItem, opts ProviderOptions) (openrouter.ChatCompletionRequest, error) {
+	converted, err := ConvertMessages(messages)
+	if err != nil {
+		return openrouter.ChatCompletionRequest{}, err
+	}
+
 	return openrouter.ChatCompletionRequest{
 		Model:       opts.Model,
-		Messages:    ConvertMessages(messages),
+		Messages:    converted,
 		Tools:       ToOpenRouterTools(opts.Tools...),
 		Temperature: 0.7,
-	}
+	}, nil
 }
 
-// ConvertMessages converts internal session items into openrouter messages.
-func ConvertMessages(items []internal.SessionItem) []openrouter.ChatCompletionMessage {
-	messages := []openrouter.ChatCompletionMessage{}
+// ConvertMessages converts shaped context items into openrouter messages.
+func ConvertMessages(items []icontext.ContextItem) ([]openrouter.ChatCompletionMessage, error) {
+	messages := make([]openrouter.ChatCompletionMessage, 0, len(items))
 
 	for _, item := range items {
-		messages = append(messages, ConvertItem(item))
+		msg, err := ConvertItem(item)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, msg)
 	}
 
-	return messages
+	return messages, nil
 }
 
-// ConvertItem converts a single session item into an openrouter message.
-func ConvertItem(item internal.SessionItem) openrouter.ChatCompletionMessage {
+// ConvertItem converts a single context item into an openrouter message.
+func ConvertItem(item icontext.ContextItem) (openrouter.ChatCompletionMessage, error) {
 	switch msg := item.(type) {
-	case internal.UserMessage:
-		return openrouter.UserMessage(msg.Content)
-	case internal.SystemMessage:
-		return openrouter.SystemMessage(msg.Content)
-	case internal.AssistantMessage:
+	case icontext.ContextUserMessage:
+		return openrouter.UserMessage(msg.Content), nil
+	case icontext.ContextSystemMessage:
+		return openrouter.SystemMessage(msg.Content), nil
+	case icontext.ContextAssistantMessage:
 		am := openrouter.AssistantMessage(msg.Content)
 		am.Reasoning = &msg.Reasoning
-		return am
-	case internal.ToolCallRequestMessage:
-		return convertToolCallRequest(msg)
-	case internal.ToolCallResultMessage:
-		return openrouter.ToolMessage(msg.ToolCallID, msg.Content)
+		return am, nil
+	case icontext.ContextToolCallRequestMessage:
+		return convertToolCallRequest(msg), nil
+	case icontext.ContextToolCallResultMessage:
+		return openrouter.ToolMessage(msg.ToolCallID, msg.Content), nil
 	default:
-		panic(fmt.Sprintf("ConvertItem: unknown session item type %T", item))
+		return openrouter.ChatCompletionMessage{}, fmt.Errorf("convert context item: unsupported type %T", item)
 	}
 }
 
 // convertToolCallRequest converts a tool call request into an assistant message with tool_calls.
-func convertToolCallRequest(msg internal.ToolCallRequestMessage) openrouter.ChatCompletionMessage {
-	am := openrouter.AssistantMessage("")
+func convertToolCallRequest(msg icontext.ContextToolCallRequestMessage) openrouter.ChatCompletionMessage {
+	am := openrouter.AssistantMessage(msg.Content)
 
 	argsStr := serializeArguments(msg.Arguments)
 
@@ -114,7 +127,6 @@ func (o *OpenRouterResponse) ToSessionItems() []internal.SessionItem {
 	msg := choice.Message
 	items := []internal.SessionItem{}
 
-	// Add assistant message if it has content or reasoning
 	reasoning := ""
 	if msg.Reasoning != nil {
 		reasoning = *msg.Reasoning
@@ -126,7 +138,6 @@ func (o *OpenRouterResponse) ToSessionItems() []internal.SessionItem {
 		})
 	}
 
-	// Add tool calls if present
 	for _, tc := range msg.ToolCalls {
 		toolCallMsg := internal.ToolCallRequestMessage{
 			ToolCallID: tc.ID,
@@ -156,12 +167,15 @@ func ToOpenRouterTools(defs ...internal.ToolDefinition) []openrouter.Tool {
 	return tools
 }
 
-func NewOpenRouter(apiKey string) OpenRouterAPI {
+func NewOpenRouter(apiKey string) (OpenRouterAPI, error) {
+	if apiKey == "" {
+		return OpenRouterAPI{}, fmt.Errorf("missing OpenRouter API key")
+	}
 	return OpenRouterAPI{
 		client: *openrouter.NewClient(
 			apiKey,
 			openrouter.WithXTitle("MaelstromCode"),
 			openrouter.WithHTTPReferer("https://maelstrom.dev"),
 		),
-	}
+	}, nil
 }

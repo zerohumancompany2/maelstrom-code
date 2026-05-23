@@ -28,11 +28,22 @@ type Agent struct {
 
 func (a *Agent) BuildContextDefinition(r *tools.Registry) context.ContextDefinition {
 	return context.ContextDefinition{
-		Model: a.Model.Name,
-		Tools: r.Definitions(),
-		Chunks: []context.ContextChunk{
-			context.SystemChunk{Prompt: a.SystemPrompt},
-			context.MessagesChunk{},
+		Model:        a.Model.Name,
+		Tools:        r.Definitions(),
+		ContextLimit: a.Model.ContextLength,
+		Chunks: []context.ChunkSpec{
+			{
+				Chunk:     context.SystemChunk{Prompt: a.SystemPrompt},
+				BudgetPct: 0.05,
+				Policy:    &context.FailTruncate{},
+				Priority:  10,
+			},
+			{
+				Chunk:     context.MessagesChunk{},
+				Policy:    &context.HardTruncate{},
+				Priority:  5,
+				Flexible:  true,
+			},
 		},
 	}
 }

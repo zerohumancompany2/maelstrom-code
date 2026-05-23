@@ -6,6 +6,7 @@ import "fmt"
 
 type SessionItem interface {
 	isSessionItem() bool
+	// GetContent() string // lift content access into setter/getter?
 }
 
 type UserMessage struct {

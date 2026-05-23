@@ -37,8 +37,12 @@ systemPrompt: |
 	reg := tools.NewRegistry(tools.WeatherTool{})
 
 	c := context.NewFromDefinition(agent.BuildContextDefinition(reg))
+	c.Tokenizer = &context.HeuristicTokenizer{}
 
-	driver := providers.NewOpenRouter(os.Getenv("OPENROUTER_API_KEY"))
+	driver, err := providers.NewOpenRouter(os.Getenv("OPENROUTER_API_KEY"))
+	if err != nil {
+		panic(err)
+	}
 
 	for {
 		fmt.Print(">>> ")
