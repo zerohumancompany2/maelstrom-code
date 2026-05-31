@@ -78,3 +78,85 @@ func TestLoopRunProcessesToolCallAndAssistantResponse(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestLoopRunStopsWhenProviderReturnsOnlyAssistantOutput(t *testing.T) {
+	fakeProvider := &provider.FakeProvider{Response: provider.Response{Outputs: []provider.Output{
+		provider.AssistantOutput{Content: "All done."},
+	}}}
+	loop := Loop{
+		Provider: fakeProvider,
+		Tools:    tools.NewRegistry(),
+		Projections: []prompt.Projection{
+			prompt.StaticProjection{ProjectionName: "system", Role: "system", Prompt: "You are a coding agent."},
+			prompt.RecentHistoryProjection{},
+		},
+		MaxHistory: 10,
+	}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe"}}
+	sessionHistory := logs.NewSessionHistory("session-003")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Summarize the current task."})
+
+	if err := loop.Run(agent, agentDef, nil, sessionHistory, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	foundAssistant := false
+	for _, record := range sessionHistory.Records {
+		if msg, ok := record.(logs.AssistantMessageRecord); ok && msg.Content == "All done." {
+			foundAssistant = true
+		}
+	}
+	if !foundAssistant {
+		t.Fatalf("expected assistant message in session history, got %#v", sessionHistory.Records)
+	}
+}
+
+func TestLoopRunProcessesWorkflowTransitionWhenBound(t *testing.T) {
+	raw, _ := json.Marshal(map[string]string{"chart": "workflow", "trigger": "start_implementation"})
+	fakeProvider := &provider.FakeProvider{Response: provider.Response{Outputs: []provider.Output{
+		provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-004", ToolName: "transition_state", Arguments: map[string]string{"chart": "workflow", "trigger": "start_implementation"}, RawArgs: raw}},
+		provider.AssistantOutput{Content: "Workflow advanced."},
+	}}}
+	toolRegistry := tools.NewRegistry(tools.TransitionTool{
+		WorkflowChart: statecharts.Compile("workflow", defs.StatechartDefinition{InitialState: "planning", Transitions: []defs.TransitionDefinition{{Trigger: "start_implementation", From: "planning", To: "implementing"}}}),
+	})
+	loop := Loop{
+		Provider: fakeProvider,
+		Tools:    toolRegistry,
+		Projections: []prompt.Projection{
+			prompt.StaticProjection{ProjectionName: "system", Role: "system", Prompt: "You are a coding agent."},
+			prompt.WorkflowProjection{},
+			prompt.RecentHistoryProjection{},
+		},
+		MaxHistory: 10,
+	}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe"}}
+	workflowDef := defs.WorkflowDefinition{Description: "Conversation flow", Context: "Implement feature", Statechart: defs.StatechartDefinition{InitialState: "planning", States: []defs.StateDefinition{{Name: "planning"}, {Name: "implementing"}}}}
+	sessionHistory := logs.NewSessionHistory("session-004")
+	sessionHistory.Append(logs.SessionWorkflowBindingRecord{SessionBaseRecord: sessionHistory.NextRecord("workflow_binding_ref"), BindingID: "bind-004", WorkflowID: "workflow-004", Action: "bind"})
+	workflowHistory := logs.NewWorkflowHistory("workflow-004")
+
+	err := loop.Run(agent, agentDef, &workflowDef, sessionHistory, workflowHistory)
+	if err == nil {
+		foundSessionRef := false
+		foundWorkflowTransition := false
+		for _, record := range sessionHistory.Records {
+			if ref, ok := record.(logs.WorkflowTransitionRefRecord); ok && ref.ToState == "implementing" {
+				foundSessionRef = true
+			}
+		}
+		for _, record := range workflowHistory.Records {
+			if tr, ok := record.(logs.WorkflowTransitionRecord); ok && tr.ToState == "implementing" {
+				foundWorkflowTransition = true
+			}
+		}
+		if !foundSessionRef || !foundWorkflowTransition {
+			t.Fatalf("expected linked workflow transition records, got session=%#v workflow=%#v", sessionHistory.Records, workflowHistory.Records)
+		}
+		return
+	}
+	if err.Error() != "loop guard tripped" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
