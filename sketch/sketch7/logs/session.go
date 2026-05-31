@@ -56,6 +56,16 @@ type SessionWorkflowBindingRecord struct {
 	Action     string
 }
 
+type WorkflowTransitionRefRecord struct {
+	SessionBaseRecord
+	WorkflowID       string
+	FromState        string
+	ToState          string
+	Trigger          string
+	DerivedFromIDs   []string
+	WorkflowRecordID string
+}
+
 type InterruptRecord struct {
 	SessionBaseRecord
 	Reason         string
