@@ -14,8 +14,7 @@ type Agent struct {
 	Limits       model.Limits
 	Capabilities model.Capabilities
 
-	ToolNames       []string
-	MaxHistoryItems int
+	ToolNames []string
 }
 
 type InferenceSettings struct {

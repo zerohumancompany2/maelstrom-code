@@ -20,12 +20,12 @@ type Loop struct {
 }
 
 func (l Loop) Run(agent runtime.Agent, definition agent.Definition, history *session.History, store *inference.Store) error {
-	assembler, err := assembly.BuildAssembler(definition)
+	plan, err := assembly.BuildPlan(definition)
 	if err != nil {
 		return err
 	}
 	for iteration := 1; ; iteration++ {
-		assembled, err := assembler.Assemble(assembly.Input{Agent: agent, History: history, Charts: charts.BuildSnapshot(history)})
+		assembled, err := plan.Assembler.Assemble(assembly.Input{Agent: agent, History: history, Charts: charts.BuildSnapshot(history), MaxHistoryItems: plan.MaxHistoryItems})
 		if err != nil {
 			return err
 		}

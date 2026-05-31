@@ -46,9 +46,10 @@ func (s StateSegment) SourceRecordIDs() []string      { return append([]string(n
 func (s StateSegment) ProvenanceStep() ProvenanceStep { return s.Step }
 
 type Input struct {
-	Agent   runtime.Agent
-	History *session.History
-	Charts  charts.Snapshot
+	Agent           runtime.Agent
+	History         *session.History
+	Charts          charts.Snapshot
+	MaxHistoryItems int
 }
 
 type Result struct {
@@ -76,21 +77,30 @@ type InferencePayload struct {
 	Steps           []ProvenanceStep
 }
 
-func BuildAssembler(def agent.Definition) (Assembler, error) {
+type Plan struct {
+	Assembler       Assembler
+	MaxHistoryItems int
+}
+
+func BuildPlan(def agent.Definition) (Plan, error) {
 	chunks := make([]Chunk, 0, len(def.Context.Chunks))
+	maxHistoryItems := 0
 	for _, chunk := range def.Context.Chunks {
 		switch chunk.Type {
 		case "system":
 			chunks = append(chunks, StaticSystemChunk{Prompt: chunk.Prompt})
 		case "messages":
 			chunks = append(chunks, RecentHistoryChunk{})
+			if maxHistoryItems == 0 {
+				maxHistoryItems = 10
+			}
 		case "state":
 			chunks = append(chunks, StateProjectionChunk{ChartName: chunk.Chart})
 		default:
-			return Assembler{}, ErrUnknownChunkType{Type: chunk.Type}
+			return Plan{}, ErrUnknownChunkType{Type: chunk.Type}
 		}
 	}
-	return Assembler{Chunks: chunks}, nil
+	return Plan{Assembler: Assembler{Chunks: chunks}, MaxHistoryItems: maxHistoryItems}, nil
 }
 
 type ErrUnknownChunkType struct{ Type string }

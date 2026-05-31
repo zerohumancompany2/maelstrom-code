@@ -27,10 +27,6 @@ func (h Hydrator) Hydrate(def agent.Definition) (runtime.Agent, error) {
 		return runtime.Agent{}, err
 	}
 	provider := modelDef.Providers[0]
-	_, err := assembly.BuildAssembler(def)
-	if err != nil {
-		return runtime.Agent{}, err
-	}
 	settings := runtime.InferenceSettings{
 		Temperature:     modelDef.Defaults.Temperature,
 		TopP:            modelDef.Defaults.TopP,
@@ -50,26 +46,16 @@ func (h Hydrator) Hydrate(def agent.Definition) (runtime.Agent, error) {
 		toolNames = append(toolNames, strings.TrimSpace(toolName))
 	}
 	return runtime.Agent{
-		Name:            def.Name,
-		Description:     def.Description,
-		LogicalModel:    modelDef.Name,
-		ProviderName:    provider.Name,
-		ProviderRef:     provider.ModelRef,
-		Inference:       settings,
-		Limits:          modelDef.Limits,
-		Capabilities:    modelDef.Capabilities,
-		ToolNames:       toolNames,
-		MaxHistoryItems: deriveMaxHistoryItems(def),
+		Name:         def.Name,
+		Description:  def.Description,
+		LogicalModel: modelDef.Name,
+		ProviderName: provider.Name,
+		ProviderRef:  provider.ModelRef,
+		Inference:    settings,
+		Limits:       modelDef.Limits,
+		Capabilities: modelDef.Capabilities,
+		ToolNames:    toolNames,
 	}, nil
-}
-
-func deriveMaxHistoryItems(def agent.Definition) int {
-	for _, chunk := range def.Context.Chunks {
-		if chunk.Type == "messages" {
-			return 10
-		}
-	}
-	return 0
 }
 
 func validateAgentDefinition(def agent.Definition, modelDef model.Definition, toolRegistry tools.Registry) error {
@@ -84,6 +70,9 @@ func validateAgentDefinition(def agent.Definition, modelDef model.Definition, to
 	}
 	if modelDef.Limits.ContextWindow > 0 && def.Context.InputBudget > modelDef.Limits.ContextWindow {
 		return fmt.Errorf("agent inputBudget %d exceeds model contextWindow %d", def.Context.InputBudget, modelDef.Limits.ContextWindow)
+	}
+	if _, err := assembly.BuildPlan(def); err != nil {
+		return err
 	}
 	for _, toolName := range def.Tools {
 		if _, ok := toolRegistry.Lookup(strings.TrimSpace(toolName)); !ok {
