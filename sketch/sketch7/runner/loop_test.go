@@ -435,3 +435,105 @@ func (w *Worker) Execute() string {
 		t.Fatalf("got %d provider requests, want 6", len(providerScript.requests))
 	}
 }
+
+func TestLoopRunSelfRepoStyleMaintenanceFlow(t *testing.T) {
+	tempDir := t.TempDir()
+	goFile := filepath.Join(tempDir, "tools.go")
+	goContent := `package sample
+
+type ReplaceTextTool struct{}
+
+func (ReplaceTextTool) Definition() string {
+	return "Replace exact text in a file"
+}
+
+func helper() string {
+	return "unchanged"
+}
+`
+	if err := os.WriteFile(goFile, []byte(goContent), 0o644); err != nil {
+		t.Fatalf("write tools.go: %v", err)
+	}
+	searchRaw, _ := json.Marshal(map[string]string{"pattern": "ReplaceTextTool", "include_glob": "*.go"})
+	refsRaw, _ := json.Marshal(map[string]string{"symbol": "ReplaceTextTool", "include_glob": "*.go"})
+	symbolRaw, _ := json.Marshal(map[string]string{"path": "tools.go", "symbol": "Definition"})
+	replaceRaw, _ := json.Marshal(map[string]string{"path": "tools.go", "old_text": "Replace exact text in a file", "new_text": "Replace exact text in a file when matched once"})
+	commandRaw, _ := json.Marshal(map[string]string{"command": "cat tools.go"})
+	providerScript := &scriptedProvider{responses: []provider.Response{
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-search-040", ToolName: "search_files", Arguments: map[string]string{"pattern": "ReplaceTextTool", "include_glob": "*.go"}, RawArgs: searchRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-refs-040", ToolName: "find_references", Arguments: map[string]string{"symbol": "ReplaceTextTool", "include_glob": "*.go"}, RawArgs: refsRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-symbol-040", ToolName: "read_symbol", Arguments: map[string]string{"path": "tools.go", "symbol": "Definition"}, RawArgs: symbolRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-replace-040", ToolName: "replace_text", Arguments: map[string]string{"path": "tools.go", "old_text": "Replace exact text in a file", "new_text": "Replace exact text in a file when matched once"}, RawArgs: replaceRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-command-040", ToolName: "run_command", Arguments: map[string]string{"command": "cat tools.go"}, RawArgs: commandRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.AssistantOutput{Content: "Updated ReplaceTextTool definition text and verified the file contents."},
+		}},
+	}}
+	toolRegistry := tools.NewRegistry(
+		tools.SearchFilesTool{RootDir: tempDir, LookupPath: func(name string) (string, error) { return "", os.ErrNotExist }},
+		tools.FindReferencesTool{RootDir: tempDir, LookupPath: func(name string) (string, error) { return "", os.ErrNotExist }},
+		tools.ReadSymbolTool{RootDir: tempDir},
+		tools.ReplaceTextTool{RootDir: tempDir},
+		tools.RunCommandTool{RootDir: tempDir},
+	)
+	loop := Loop{
+		Provider: providerScript,
+		Tools:    toolRegistry,
+		Projections: []prompt.Projection{
+			prompt.StaticProjection{ProjectionName: "system", Role: "system", Prompt: "You are a coding agent."},
+			prompt.RecentHistoryProjection{},
+		},
+		MaxHistory: 20,
+	}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe"}}
+	sessionHistory := logs.NewSessionHistory("session-040")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Tighten the ReplaceTextTool definition text and verify it."})
+
+	if err := loop.Run(agent, agentDef, nil, sessionHistory, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	updated, err := os.ReadFile(goFile)
+	if err != nil {
+		t.Fatalf("read updated tools.go: %v", err)
+	}
+	if !strings.Contains(string(updated), "Replace exact text in a file when matched once") {
+		t.Fatalf("updated file = %q, want tightened definition text", string(updated))
+	}
+	foundRefs := false
+	foundSymbol := false
+	foundSummary := false
+	for _, record := range sessionHistory.Records {
+		if result, ok := record.(logs.ToolCallResultRecord); ok {
+			switch result.ToolName {
+			case "find_references":
+				if strings.Contains(result.Content, "ReplaceTextTool") {
+					foundRefs = true
+				}
+			case "read_symbol":
+				if strings.Contains(result.Content, "Definition") {
+					foundSymbol = true
+				}
+			}
+		}
+		if msg, ok := record.(logs.AssistantMessageRecord); ok && msg.Content == "Updated ReplaceTextTool definition text and verified the file contents." {
+			foundSummary = true
+		}
+	}
+	if !foundRefs || !foundSymbol || !foundSummary {
+		t.Fatalf("expected references, symbol, and summary records, got %#v", sessionHistory.Records)
+	}
+	if len(providerScript.requests) != 6 {
+		t.Fatalf("got %d provider requests, want 6", len(providerScript.requests))
+	}
+}
