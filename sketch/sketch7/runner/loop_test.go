@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/comalice/inference_sketch/sketch/sketch7/defs"
@@ -12,6 +13,32 @@ import (
 	"github.com/comalice/inference_sketch/sketch/sketch7/statecharts"
 	"github.com/comalice/inference_sketch/sketch/sketch7/tools"
 )
+
+type scriptedProvider struct {
+	responses []provider.Response
+	requests  []provider.Request
+	builds    []provider.Request
+	index     int
+}
+
+func (s *scriptedProvider) BuildRequest(agent runtime.Agent, payload prompt.Payload, tools []provider.ToolDefinition) (provider.Request, error) {
+	request, err := provider.BuildRequest(agent, payload, tools)
+	if err != nil {
+		return provider.Request{}, err
+	}
+	s.builds = append(s.builds, request)
+	return request, nil
+}
+
+func (s *scriptedProvider) Send(request provider.Request) (provider.Response, error) {
+	s.requests = append(s.requests, request)
+	if s.index >= len(s.responses) {
+		return provider.Response{}, fmt.Errorf("no scripted response for request %d", s.index)
+	}
+	response := s.responses[s.index]
+	s.index++
+	return response, nil
+}
 
 func TestBuildSessionViewReducesBoundWorkflowState(t *testing.T) {
 	agent := runtime.Agent{Name: "builder"}
@@ -158,5 +185,78 @@ func TestLoopRunProcessesWorkflowTransitionWhenBound(t *testing.T) {
 	}
 	if err.Error() != "loop guard tripped" {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoopRunScriptedBindInterruptResumeFlow(t *testing.T) {
+	bindRaw, _ := json.Marshal(map[string]string{"workflow_id": "workflow-010", "binding_id": "bind-010"})
+	interruptRaw, _ := json.Marshal(map[string]string{"reason": "need clarification", "requested_by": "user"})
+	resumeRaw, _ := json.Marshal(map[string]string{"reason": "user clarified"})
+	providerScript := &scriptedProvider{responses: []provider.Response{
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-bind-010", ToolName: "bind_workflow", Arguments: map[string]string{"workflow_id": "workflow-010", "binding_id": "bind-010"}, RawArgs: bindRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-interrupt-010", ToolName: "interrupt_session", Arguments: map[string]string{"reason": "need clarification", "requested_by": "user"}, RawArgs: interruptRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-resume-010", ToolName: "resume_session", Arguments: map[string]string{"reason": "user clarified"}, RawArgs: resumeRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.AssistantOutput{Content: "Resumed successfully."},
+		}},
+	}}
+	toolRegistry := tools.NewRegistry(tools.BindingTool{}, tools.InterruptTool{}, tools.ResumeTool{})
+	loop := Loop{
+		Provider: providerScript,
+		Tools:    toolRegistry,
+		Projections: []prompt.Projection{
+			prompt.StaticProjection{ProjectionName: "system", Role: "system", Prompt: "You are a coding agent."},
+			prompt.BindingProjection{},
+			prompt.InteractionProjection{},
+			prompt.RecentHistoryProjection{},
+		},
+		MaxHistory: 10,
+	}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe"}}
+	workflowDef := defs.WorkflowDefinition{Description: "Conversation flow", Context: "Implement feature", Statechart: defs.StatechartDefinition{InitialState: "chatting"}}
+	sessionHistory := logs.NewSessionHistory("session-010")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Start working, but I may interrupt."})
+	workflowHistory := logs.NewWorkflowHistory("workflow-010")
+
+	if err := loop.Run(agent, agentDef, &workflowDef, sessionHistory, workflowHistory); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	foundBind := false
+	foundInterrupt := false
+	foundResume := false
+	foundAssistant := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.SessionWorkflowBindingRecord:
+			if v.Action == "bind" && v.WorkflowID == "workflow-010" {
+				foundBind = true
+			}
+		case logs.InterruptRecord:
+			if v.Reason == "need clarification" {
+				foundInterrupt = true
+			}
+		case logs.ResumeRecord:
+			if v.Reason == "user clarified" {
+				foundResume = true
+			}
+		case logs.AssistantMessageRecord:
+			if v.Content == "Resumed successfully." {
+				foundAssistant = true
+			}
+		}
+	}
+	if !foundBind || !foundInterrupt || !foundResume || !foundAssistant {
+		t.Fatalf("expected bind/interrupt/resume/assistant records, got %#v", sessionHistory.Records)
+	}
+	if len(providerScript.requests) != 4 {
+		t.Fatalf("got %d provider requests, want 4", len(providerScript.requests))
 	}
 }
