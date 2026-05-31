@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/comalice/inference_sketch/sketch/sketch7/defs"
@@ -334,5 +335,103 @@ func TestLoopRunReadEditValidateSummaryFlow(t *testing.T) {
 	}
 	if len(providerScript.requests) != 4 {
 		t.Fatalf("got %d provider requests, want 4", len(providerScript.requests))
+	}
+}
+
+func TestLoopRunSearchSkeletonReadEditValidateFlow(t *testing.T) {
+	tempDir := t.TempDir()
+	goFile := filepath.Join(tempDir, "worker.go")
+	goContent := `package sample
+
+type Worker struct{}
+
+func (w *Worker) Execute() string {
+	return "old value"
+}
+`
+	if err := os.WriteFile(goFile, []byte(goContent), 0o644); err != nil {
+		t.Fatalf("write worker.go: %v", err)
+	}
+	searchRaw, _ := json.Marshal(map[string]string{"pattern": "Execute", "include_glob": "*.go"})
+	skeletonRaw, _ := json.Marshal(map[string]string{"path": "worker.go"})
+	readRaw, _ := json.Marshal(map[string]string{"path": "worker.go", "start_line": "3", "end_line": "6"})
+	replaceRaw, _ := json.Marshal(map[string]string{"path": "worker.go", "old_text": "old value", "new_text": "new value"})
+	commandRaw, _ := json.Marshal(map[string]string{"command": "cat worker.go"})
+	providerScript := &scriptedProvider{responses: []provider.Response{
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-search-030", ToolName: "search_files", Arguments: map[string]string{"pattern": "Execute", "include_glob": "*.go"}, RawArgs: searchRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-skeleton-030", ToolName: "get_file_skeleton", Arguments: map[string]string{"path": "worker.go"}, RawArgs: skeletonRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-read-030", ToolName: "read_file", Arguments: map[string]string{"path": "worker.go", "start_line": "3", "end_line": "6"}, RawArgs: readRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-replace-030", ToolName: "replace_text", Arguments: map[string]string{"path": "worker.go", "old_text": "old value", "new_text": "new value"}, RawArgs: replaceRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-command-030", ToolName: "run_command", Arguments: map[string]string{"command": "cat worker.go"}, RawArgs: commandRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.AssistantOutput{Content: "Updated Execute() to return the new value."},
+		}},
+	}}
+	toolRegistry := tools.NewRegistry(
+		tools.SearchFilesTool{RootDir: tempDir, LookupPath: func(name string) (string, error) { return "", os.ErrNotExist }},
+		tools.GetFileSkeletonTool{RootDir: tempDir},
+		tools.ReadFileTool{RootDir: tempDir},
+		tools.ReplaceTextTool{RootDir: tempDir},
+		tools.RunCommandTool{RootDir: tempDir},
+	)
+	loop := Loop{
+		Provider: providerScript,
+		Tools:    toolRegistry,
+		Projections: []prompt.Projection{
+			prompt.StaticProjection{ProjectionName: "system", Role: "system", Prompt: "You are a coding agent."},
+			prompt.RecentHistoryProjection{},
+		},
+		MaxHistory: 20,
+	}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe"}}
+	sessionHistory := logs.NewSessionHistory("session-030")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Find Execute and update its return value."})
+
+	if err := loop.Run(agent, agentDef, nil, sessionHistory, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	updated, err := os.ReadFile(goFile)
+	if err != nil {
+		t.Fatalf("read updated go file: %v", err)
+	}
+	if !strings.Contains(string(updated), `return "new value"`) {
+		t.Fatalf("updated file = %q, want new value", string(updated))
+	}
+	foundSearch := false
+	foundSkeleton := false
+	foundSummary := false
+	for _, record := range sessionHistory.Records {
+		if result, ok := record.(logs.ToolCallResultRecord); ok {
+			switch result.ToolName {
+			case "search_files":
+				if strings.Contains(result.Content, "worker.go") {
+					foundSearch = true
+				}
+			case "get_file_skeleton":
+				if strings.Contains(result.Content, "func (*Worker) Execute(...)") {
+					foundSkeleton = true
+				}
+			}
+		}
+		if msg, ok := record.(logs.AssistantMessageRecord); ok && msg.Content == "Updated Execute() to return the new value." {
+			foundSummary = true
+		}
+	}
+	if !foundSearch || !foundSkeleton || !foundSummary {
+		t.Fatalf("expected search, skeleton, and summary records, got %#v", sessionHistory.Records)
+	}
+	if len(providerScript.requests) != 6 {
+		t.Fatalf("got %d provider requests, want 6", len(providerScript.requests))
 	}
 }

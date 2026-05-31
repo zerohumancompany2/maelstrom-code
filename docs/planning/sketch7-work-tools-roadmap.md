@@ -244,6 +244,30 @@ Recommended search backend preference order:
 
 This gives sketch7 a stable agent-facing tool contract while still taking advantage of strong external runtimes where available.
 
+#### Design note: `read_symbol` backend evolution
+
+`read_symbol` is a high-leverage follow-up tool after `search_files` and `get_file_skeleton` because it lets the agent move from broad discovery to precise symbol-level reads.
+
+For sketch7, a Go-first implementation backed by the Go AST is a good near-term choice.
+
+However, like `get_file_skeleton`, this tool should not be assumed to remain permanently bespoke.
+Over time it should lean on stronger language-aware backends where appropriate, such as:
+
+- tree-sitter-based runtimes,
+- or language-server-backed runtimes.
+
+Why:
+
+- symbol extraction and reference discovery become more accurate with mature language tooling,
+- symbol identity and reference resolution are deeper problems than simple text slicing,
+- and Maelstrom should leverage strong existing language tooling where it exists rather than reimplementing everything forever.
+
+So the recommended path is:
+
+- MVP: Go-AST-backed `read_symbol` for definition extraction,
+- then optional reference support,
+- then eventual migration or augmentation with tree-sitter / LSP-backed implementations for supported languages.
+
 ### Wave 3
 
 - anchor-based edit tool
