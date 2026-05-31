@@ -157,6 +157,7 @@ func defaultAgentDefinition(modelName string) defs.AgentDefinition {
 		Description: "Minimal sketch7 coding agent for local experiments",
 		Model:       modelName,
 		Tools: []string{
+			"list_files",
 			"search_files",
 			"get_file_skeleton",
 			"read_symbol",
@@ -177,7 +178,7 @@ func defaultAgentDefinition(modelName string) defs.AgentDefinition {
 		Cognitive: defs.StatechartDefinition{
 			InitialState: "observe",
 			States: []defs.StateDefinition{
-				{Name: "observe", Prompt: "Observe and gather evidence before acting.", VisibleTools: []string{"search_files", "get_file_skeleton", "read_symbol", "find_references", "read_file"}, EnabledTools: []string{"search_files", "get_file_skeleton", "read_symbol", "find_references", "read_file", "replace_text", "run_command"}},
+				{Name: "observe", Prompt: "Observe and gather evidence before acting.", VisibleTools: []string{"list_files", "search_files", "get_file_skeleton", "read_symbol", "find_references", "read_file"}, EnabledTools: []string{"list_files", "search_files", "get_file_skeleton", "read_symbol", "find_references", "read_file", "replace_text", "run_command"}},
 			},
 		},
 	}
@@ -201,6 +202,7 @@ func buildToolRegistry() tools.Registry {
 		tools.UnbindTool{},
 		tools.InterruptTool{},
 		tools.ResumeTool{},
+		tools.ListFilesTool{RootDir: root},
 		tools.ReadFileTool{RootDir: root},
 		tools.ReplaceTextTool{RootDir: root},
 		tools.RunCommandTool{RootDir: root},
