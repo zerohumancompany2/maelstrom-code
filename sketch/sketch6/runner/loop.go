@@ -26,12 +26,8 @@ func (l Loop) Run(agentRuntime runtime.Agent, definition agent.Definition, workf
 		return err
 	}
 	for iteration := 1; ; iteration++ {
-		cognitiveState := charts.BuildSnapshot(history).State("agent")
-		if cognitiveState == "idle" && definition.Cognitive.InitialState != "" {
-			cognitiveState = definition.Cognitive.InitialState
-		}
-		cognitive := runtime.ReduceCognitiveState(cognitiveState, BuildCognitiveStateMap(definition))
-		view := runtime.RuntimeView{Agent: agentRuntime, Cognitive: cognitive, Binding: binding, Workflow: runtime.ReduceWorkflowState(DeriveWorkflowSnapshot(workflowHistory, workflowSnapshot), binding)}
+		cognitive := runtime.ReduceCognitiveStateFromHistory(history, definition.Cognitive.InitialState, BuildCognitiveStateMap(definition))
+		view := runtime.RuntimeView{Agent: agentRuntime, Cognitive: cognitive, Binding: binding, Workflow: runtime.ReduceWorkflowState(runtime.ReduceWorkflowStateFromHistory(workflowHistory, workflowSnapshot), binding)}
 		assembled, err := plan.Assembler.Assemble(assembly.Input{RuntimeView: view, History: history, Charts: charts.BuildSnapshot(history), MaxHistoryItems: plan.MaxHistoryItems})
 		if err != nil {
 			return err
@@ -78,25 +74,6 @@ func BuildCognitiveStateMap(definition agent.Definition) map[string]runtime.Cogn
 		states[state.Name] = runtime.CognitiveSnapshot{CurrentState: state.Name, VisibleTools: append([]string(nil), state.VisibleTools...), EnabledTools: append([]string(nil), state.EnabledTools...), Prompt: state.Prompt}
 	}
 	return states
-}
-
-func DeriveWorkflowSnapshot(history *workflow.History, base *runtime.WorkflowSnapshot) runtime.WorkflowSnapshot {
-	if base == nil {
-		return runtime.WorkflowSnapshot{}
-	}
-	result := *base
-	for i := len(history.Records) - 1; i >= 0; i-- {
-		switch v := history.Records[i].(type) {
-		case workflow.StateTransitionRecord:
-			result.CurrentState = v.ToState
-			return result
-		case workflow.BindingRefRecord:
-			if result.LastBoundAgent == "" && v.Action == "bind" {
-				result.LastBoundAgent = v.AgentID
-			}
-		}
-	}
-	return result
 }
 
 func (l Loop) consumeProviderOutput(agentRuntime runtime.Agent, history *session.History, output provider.Output) ([]session.Record, error) {
