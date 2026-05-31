@@ -1,10 +1,14 @@
 package runner
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/comalice/inference_sketch/sketch/sketch6/agent"
+	"github.com/comalice/inference_sketch/sketch/sketch6/assembly"
+	"github.com/comalice/inference_sketch/sketch/sketch6/inference"
 	"github.com/comalice/inference_sketch/sketch/sketch6/provider"
 	"github.com/comalice/inference_sketch/sketch/sketch6/runtime"
 	"github.com/comalice/inference_sketch/sketch/sketch6/session"
@@ -186,6 +190,145 @@ func TestConsumeProviderOutputForAssistantMessage(t *testing.T) {
 	if assistant.Content != "done" {
 		t.Fatalf("assistant content = %q, want done", assistant.Content)
 	}
+}
+
+func TestRunBuildsRuntimeViewAcrossIterations(t *testing.T) {
+	providerStub := &scriptedProvider{responses: []provider.Response{
+		{Outputs: []provider.Output{toolRequestForTest("call-1", "transition_state", map[string]string{"chart": "workflow", "trigger": "begin_lookup"})}},
+		{Outputs: []provider.Output{toolRequestForTest("call-2", "weather", map[string]string{"location": "Paris"})}},
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: "done"}}},
+	}}
+	workflowHistory := workflow.NewHistory("workflow-001")
+	toolExecutor := &scriptedExecutor{workflowHistory: workflowHistory}
+	loop := Loop{
+		Provider: providerStub,
+		Tools:    toolExecutor,
+		Recorder: inference.Recorder{GitCommit: "test-commit", AssemblyPipeline: "test-pipeline"},
+	}
+	history := session.NewHistory("session-1")
+	history.Append(session.UserMessageRecord{BaseRecord: history.NextRecord("user"), Content: "Check Paris weather"})
+	workflowHistory.Append(workflow.BindingRefRecord{BaseRecord: workflowHistory.NextRecord("binding_ref"), BindingID: "workflow-001", AgentID: "weather-agent", Action: "bind"})
+	workflowSnapshot := &runtime.WorkflowSnapshot{
+		WorkflowID:     "workflow-001",
+		CurrentState:   "available",
+		VisibleTools:   []string{"transition_state", "weather"},
+		EnabledTools:   []string{"transition_state"},
+		Description:    "Weather lookup",
+		Context:        "Paris weather task",
+		LastBoundAgent: "weather-agent",
+	}
+	definition := agent.Definition{
+		Name:  "weather-agent",
+		Model: "gpt-test",
+		Context: agent.ContextDefinition{Chunks: []agent.ChunkDefinition{
+			{Type: "binding"},
+			{Type: "workflow_state"},
+			{Type: "cognitive_state"},
+			{Type: "messages"},
+		}},
+		Cognitive: agent.StatechartDefinition{
+			InitialState: "observe",
+			States:       []agent.StateDefinition{{Name: "observe", VisibleTools: []string{"transition_state", "weather"}, EnabledTools: []string{"transition_state"}, Prompt: "Observe first."}},
+		},
+	}
+	agentRuntime := runtime.Agent{Name: "weather-agent", LogicalModel: "gpt-test", ProviderName: "scripted", ProviderRef: "scripted/model"}
+	store := inference.NewStore()
+
+	err := loop.Run(agentRuntime, definition, workflowSnapshot, runtime.BindingSnapshot{WorkflowID: "workflow-001", Bound: true}, history, workflowHistory, store)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(providerStub.requests) != 3 {
+		t.Fatalf("provider requests = %d, want 3", len(providerStub.requests))
+	}
+	if !containsLine(providerStub.requests[0].Lines, "Workflow workflow-001 is in state available") {
+		t.Fatalf("first request lines = %#v, want available workflow state", providerStub.requests[0].Lines)
+	}
+	if !containsLine(providerStub.requests[1].Lines, "Workflow workflow-001 is in state lookup_pending") {
+		t.Fatalf("second request lines = %#v, want lookup_pending workflow state", providerStub.requests[1].Lines)
+	}
+	if !containsLine(providerStub.requests[2].Lines, "Workflow workflow-001 is in state data_ready") {
+		t.Fatalf("third request lines = %#v, want data_ready workflow state", providerStub.requests[2].Lines)
+	}
+	if !containsLine(providerStub.requests[0].Lines, "Cognitive mode: observe") {
+		t.Fatalf("first request lines = %#v, want observe cognitive state", providerStub.requests[0].Lines)
+	}
+	if len(store.Records) != 3 {
+		t.Fatalf("inference records = %d, want 3", len(store.Records))
+	}
+	if len(workflowHistory.Records) != 3 {
+		t.Fatalf("workflow history len = %d, want 3", len(workflowHistory.Records))
+	}
+	finalAssistant, ok := history.Records[len(history.Records)-1].(session.AssistantMessageRecord)
+	if !ok {
+		t.Fatalf("last history record type = %T, want AssistantMessageRecord", history.Records[len(history.Records)-1])
+	}
+	if finalAssistant.Content != "done" {
+		t.Fatalf("assistant content = %q, want done", finalAssistant.Content)
+	}
+	if len(toolExecutor.calls) != 2 {
+		t.Fatalf("tool calls = %d, want 2", len(toolExecutor.calls))
+	}
+}
+
+type scriptedProvider struct {
+	requests  []provider.Request
+	responses []provider.Response
+	idx       int
+}
+
+func (s *scriptedProvider) BuildRequest(agent runtime.Agent, payload assembly.InferencePayload) (provider.Request, error) {
+	request := provider.Request{PayloadID: payload.PayloadID, Provider: agent.ProviderName, ModelRef: agent.ProviderRef}
+	for _, segment := range payload.Segments {
+		request.Lines = append(request.Lines, segment.TokenText())
+	}
+	s.requests = append(s.requests, request)
+	return request, nil
+}
+
+func (s *scriptedProvider) ParseResponse(request provider.Request) (provider.Response, error) {
+	response := s.responses[s.idx]
+	s.idx++
+	return response, nil
+}
+
+type scriptedExecutor struct {
+	calls           []string
+	workflowHistory *workflow.History
+}
+
+func (s *scriptedExecutor) Execute(request tools.ExecutionRequest) (tools.ExecutionResult, error) {
+	s.calls = append(s.calls, request.Call.Call.ToolName)
+	switch request.Call.Call.ToolName {
+	case "transition_state":
+		transition := session.StateTransitionRecord{BaseRecord: request.History.NextRecord("state_transition"), ChartName: "workflow", FromState: "available", ToState: "lookup_pending", Trigger: "begin_lookup", DerivedFromIDs: []string{request.Request.RecordID()}}
+		if s.workflowHistory != nil {
+			s.workflowHistory.Append(workflow.StateTransitionRecord{BaseRecord: s.workflowHistory.NextRecord("workflow_state_transition"), FromState: "available", ToState: "lookup_pending", Trigger: "begin_lookup", DerivedFromIDs: []string{request.Request.RecordID()}})
+		}
+		return tools.ExecutionResult{ToolName: "transition_state", DisplayContent: "workflow advanced", Records: []session.Record{transition}}, nil
+	case "weather":
+		transition := session.StateTransitionRecord{BaseRecord: request.History.NextRecord("state_transition"), ChartName: "workflow", FromState: "lookup_pending", ToState: "data_ready", Trigger: "weather_received", DerivedFromIDs: []string{request.Request.RecordID()}}
+		if s.workflowHistory != nil {
+			s.workflowHistory.Append(workflow.StateTransitionRecord{BaseRecord: s.workflowHistory.NextRecord("workflow_state_transition"), FromState: "lookup_pending", ToState: "data_ready", Trigger: "weather_received", DerivedFromIDs: []string{request.Request.RecordID()}})
+		}
+		return tools.ExecutionResult{ToolName: "weather", DisplayContent: "weather fetched", Records: []session.Record{transition}}, nil
+	default:
+		return tools.ExecutionResult{}, nil
+	}
+}
+
+func toolRequestForTest(callID, toolName string, args map[string]string) provider.ToolRequestOutput {
+	raw, _ := json.Marshal(args)
+	return provider.ToolRequestOutput{Call: provider.ToolCall{CallID: callID, ToolName: toolName, Arguments: args, RawArgs: raw}}
+}
+
+func containsLine(lines []string, want string) bool {
+	for _, line := range lines {
+		if strings.Contains(line, want) {
+			return true
+		}
+	}
+	return false
 }
 
 type consumeToolExecutor struct {
