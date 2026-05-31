@@ -104,3 +104,35 @@ func TestSearchFilesToolParsesSearchOutput(t *testing.T) {
 		t.Fatalf("first match = %+v, want a.go:12", matches[0])
 	}
 }
+
+func TestSearchFilesRanksLikelyImplementationBeforeDocsAndTests(t *testing.T) {
+	matches := []SearchMatch{
+		{Path: "docs/replace_text.md", Line: 10, Snippet: "replace_text is described here"},
+		{Path: "sketch/sketch7/tools/replace_text_test.go", Line: 20, Snippet: "func TestReplaceTextTool(t *testing.T) {}"},
+		{Path: "sketch/sketch7/tools/replace_text.go", Line: 14, Snippet: "func (ReplaceTextTool) Definition() Definition {"},
+	}
+	ranked := rankSearchMatches("replace_text", matches, 10)
+	if len(ranked) != 3 {
+		t.Fatalf("got %d ranked matches, want 3", len(ranked))
+	}
+	if ranked[0].Path != "sketch/sketch7/tools/replace_text.go" {
+		t.Fatalf("top ranked path = %q, want implementation file first", ranked[0].Path)
+	}
+	if ranked[2].Path != "docs/replace_text.md" {
+		t.Fatalf("last ranked path = %q, want docs file last", ranked[2].Path)
+	}
+}
+
+func TestFormatSearchMatchesAddsRefinementHintAtLimit(t *testing.T) {
+	matches := []SearchMatch{
+		{Path: "one.go", Line: 1, Snippet: "func One() {}"},
+		{Path: "two.go", Line: 2, Snippet: "func Two() {}"},
+	}
+	formatted := formatSearchMatches("replace_text", "rg", matches, 2)
+	if !strings.Contains(formatted, "Refine pattern or include_glob") {
+		t.Fatalf("formatted output = %q, want refinement hint", formatted)
+	}
+	if !strings.Contains(formatted, "Showing top 2 ranked matches") {
+		t.Fatalf("formatted output = %q, want ranked summary", formatted)
+	}
+}
