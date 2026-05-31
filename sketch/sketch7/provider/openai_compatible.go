@@ -109,7 +109,24 @@ func (p *OpenAICompatibleProvider) Send(request Request) (Response, error) {
 func (p *OpenAICompatibleProvider) buildHTTPBody(request Request) ([]byte, error) {
 	messages := make([]openAIMessage, 0, len(request.Lines))
 	for _, line := range request.Lines {
-		messages = append(messages, openAIMessage{Role: line.Role, Content: line.Content})
+		switch line.Role {
+		case "assistant_tool_call":
+			messages = append(messages, openAIMessage{
+				Role: "assistant",
+				ToolCalls: []openAIToolCall{{
+					ID:   line.CallID,
+					Type: "function",
+					Function: openAIFunctionCall{
+						Name:      line.Name,
+						Arguments: line.Content,
+					},
+				}},
+			})
+		case "tool":
+			messages = append(messages, openAIMessage{Role: "tool", Content: line.Content, ToolCallID: line.CallID})
+		default:
+			messages = append(messages, openAIMessage{Role: line.Role, Content: line.Content})
+		}
 	}
 	tools := make([]openAITool, 0, len(request.Tools))
 	for _, tool := range request.Tools {

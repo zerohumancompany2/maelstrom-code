@@ -76,8 +76,11 @@ func parseLineRange(args map[string]string, lineCount int) (int, int, error) {
 	if start > end {
 		return 0, 0, fmt.Errorf("start_line cannot be greater than end_line")
 	}
-	if start > lineCount || end > lineCount {
-		return 0, 0, fmt.Errorf("line range %d-%d exceeds file length %d", start, end, lineCount)
+	if start > lineCount {
+		return 0, 0, fmt.Errorf("start_line %d exceeds file length %d", start, lineCount)
+	}
+	if end > lineCount {
+		end = lineCount
 	}
 	return start, end, nil
 }

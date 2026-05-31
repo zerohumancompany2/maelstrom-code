@@ -33,7 +33,7 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 		}
 
 		payload := prompt.BuildPayload(agent, sessionHistory.NextBundleID(), sessionHistory.SessionID, assembled)
-		request, err := l.Provider.BuildRequest(agent, payload, nil)
+		request, err := l.Provider.BuildRequest(agent, payload, toolDefinitions(l.Tools))
 		if err != nil {
 			return err
 		}
@@ -66,6 +66,23 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 			return fmt.Errorf("loop guard tripped")
 		}
 	}
+}
+
+func toolDefinitions(executor tools.Executor) []provider.ToolDefinition {
+	registry, ok := executor.(tools.Registry)
+	if !ok {
+		return nil
+	}
+	defs := registry.Definitions()
+	converted := make([]provider.ToolDefinition, 0, len(defs))
+	for _, def := range defs {
+		converted = append(converted, provider.ToolDefinition{
+			Name:        def.Name,
+			Description: def.Description,
+			Parameters:  def.Parameters,
+		})
+	}
+	return converted
 }
 
 func (l Loop) consumeProviderOutput(view runtime.SessionView, history *logs.SessionHistory, workflowHistory *logs.WorkflowHistory, output provider.Output) ([]logs.SessionRecord, []logs.WorkflowRecord, error) {

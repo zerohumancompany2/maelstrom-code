@@ -76,7 +76,7 @@ func (RecentHistoryProjection) Build(input Input) (ProjectionResult, error) {
 			result.Steps = append(result.Steps, step)
 		case logs.ToolCallRequestRecord:
 			step := ProvenanceStep{ProjectionName: "recent-history", Operation: "project-tool-call", InputRecordIDs: []string{v.RecordID()}, OutputDescriptor: "tool call prompt segment"}
-			result.Segments = append(result.Segments, PromptSegment{Role: "assistant", Content: fmt.Sprintf("tool call %s(%s)", v.ToolName, v.Arguments), RecordIDs: []string{v.RecordID()}, Step: step})
+			result.Segments = append(result.Segments, PromptSegment{Role: "assistant_tool_call", Content: fmt.Sprintf("tool call %s(%s)", v.ToolName, v.Arguments), RecordIDs: []string{v.RecordID()}, Step: step})
 			result.Steps = append(result.Steps, step)
 		case logs.ToolCallResultRecord:
 			step := ProvenanceStep{ProjectionName: "recent-history", Operation: "project-tool-result", InputRecordIDs: []string{v.RecordID()}, OutputDescriptor: "tool result prompt segment"}
