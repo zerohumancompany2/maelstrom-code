@@ -189,6 +189,27 @@ the model performs better when it can inspect code structure cheaply and precise
 - improvement in first-pass edit accuracy,
 - reduction in unnecessary command/test iterations.
 
+### Note for future evolution
+
+`get_file_skeleton` is a good near-term tool for sketch7 because it gives the agent a higher-bandwidth structural read surface quickly.
+
+However, for supported languages and environments, this tool should eventually be superseded or backed by language-server-powered runtimes rather than remaining a permanently bespoke implementation.
+
+Why:
+
+- language servers already provide rich structural and symbol information,
+- they are often more accurate and better maintained for language-specific edge cases,
+- and they let us leverage existing ecosystem tooling instead of rebuilding it all inside Maelstrom.
+
+The likely long-term direction is:
+
+- use `get_file_skeleton` as an MVP structural read primitive,
+- then replace or enrich it with language-server-backed structure/symbol services for appropriate subsets of files,
+- while preserving the same high-level runtime/tool contract where possible.
+
+This is not a current implementation task.
+It is a note to future selves so the MVP does not calcify into unnecessary bespoke tooling where better existing integrations are available.
+
 ## Future tool waves
 
 ### Wave 2
@@ -197,6 +218,31 @@ the model performs better when it can inspect code structure cheaply and precise
 - `list_files`
 - `read_symbol` / `get_function`
 - `replace_in_range`
+
+#### Design note: `search_files` backend layering
+
+`search_files` should remain its own tool contract rather than becoming an alias for `run_command`.
+
+However, it should reuse the same subprocess execution substrate as `run_command` where appropriate.
+
+Recommended layering:
+
+- shared subprocess/backend execution helper,
+- `run_command` as the generic arbitrary command tool,
+- `search_files` as a structured search tool with normalized results.
+
+This keeps responsibilities clear:
+
+- `run_command` owns generic shell execution,
+- `search_files` owns search-specific arguments, backend selection, and normalized output.
+
+Recommended search backend preference order:
+
+1. `rg`
+2. `grep`
+3. internal fallback
+
+This gives sketch7 a stable agent-facing tool contract while still taking advantage of strong external runtimes where available.
 
 ### Wave 3
 

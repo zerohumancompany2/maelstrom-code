@@ -1,10 +1,7 @@
 package tools
 
 import (
-	"bytes"
-	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -51,22 +48,12 @@ func (t RunCommandTool) Execute(request ExecutionRequest) (ExecutionResult, erro
 		timeout = time.Duration(seconds) * time.Second
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "bash", "-lc", command)
-	cmd.Dir = workdir
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-
-	output := formatCommandOutput(command, workdir, stdout.String(), stderr.String(), exitCode(err), ctx.Err() == context.DeadlineExceeded)
-	if ctx.Err() == context.DeadlineExceeded {
+	result := runSubprocess(workdir, timeout, "bash", "-lc", command)
+	output := formatCommandOutput(command, workdir, result.Stdout, result.Stderr, result.ExitCode, result.TimedOut)
+	if result.TimedOut {
 		return ExecutionResult{ToolName: "run_command", DisplayContent: output, IsError: true}, nil
 	}
-	if err != nil {
+	if result.ExitCode != 0 {
 		return ExecutionResult{ToolName: "run_command", DisplayContent: output, IsError: true}, nil
 	}
 	return ExecutionResult{ToolName: "run_command", DisplayContent: output}, nil
@@ -88,14 +75,4 @@ func formatCommandOutput(command, workdir, stdout, stderr string, code int, time
 		parts = append(parts, "Stderr:", strings.TrimRight(stderr, "\n"))
 	}
 	return strings.Join(parts, "\n")
-}
-
-func exitCode(err error) int {
-	if err == nil {
-		return 0
-	}
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		return exitErr.ExitCode()
-	}
-	return -1
 }

@@ -3,6 +3,8 @@ package runner
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/comalice/inference_sketch/sketch/sketch7/defs"
@@ -255,6 +257,80 @@ func TestLoopRunScriptedBindInterruptResumeFlow(t *testing.T) {
 	}
 	if !foundBind || !foundInterrupt || !foundResume || !foundAssistant {
 		t.Fatalf("expected bind/interrupt/resume/assistant records, got %#v", sessionHistory.Records)
+	}
+	if len(providerScript.requests) != 4 {
+		t.Fatalf("got %d provider requests, want 4", len(providerScript.requests))
+	}
+}
+
+func TestLoopRunReadEditValidateSummaryFlow(t *testing.T) {
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "sample.txt")
+	if err := os.WriteFile(filePath, []byte("hello world\n"), 0o644); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+	readRaw, _ := json.Marshal(map[string]string{"path": "sample.txt"})
+	replaceRaw, _ := json.Marshal(map[string]string{"path": "sample.txt", "old_text": "hello world", "new_text": "hello maelstrom"})
+	commandRaw, _ := json.Marshal(map[string]string{"command": "cat sample.txt"})
+	providerScript := &scriptedProvider{responses: []provider.Response{
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-read-020", ToolName: "read_file", Arguments: map[string]string{"path": "sample.txt"}, RawArgs: readRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-replace-020", ToolName: "replace_text", Arguments: map[string]string{"path": "sample.txt", "old_text": "hello world", "new_text": "hello maelstrom"}, RawArgs: replaceRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-command-020", ToolName: "run_command", Arguments: map[string]string{"command": "cat sample.txt"}, RawArgs: commandRaw}},
+		}},
+		{Outputs: []provider.Output{
+			provider.AssistantOutput{Content: "The file was updated and validated."},
+		}},
+	}}
+	toolRegistry := tools.NewRegistry(
+		tools.ReadFileTool{RootDir: tempDir},
+		tools.ReplaceTextTool{RootDir: tempDir},
+		tools.RunCommandTool{RootDir: tempDir},
+	)
+	loop := Loop{
+		Provider: providerScript,
+		Tools:    toolRegistry,
+		Projections: []prompt.Projection{
+			prompt.StaticProjection{ProjectionName: "system", Role: "system", Prompt: "You are a coding agent."},
+			prompt.RecentHistoryProjection{},
+		},
+		MaxHistory: 10,
+	}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe"}}
+	sessionHistory := logs.NewSessionHistory("session-020")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Update sample.txt and confirm the contents."})
+
+	if err := loop.Run(agent, agentDef, nil, sessionHistory, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	updated, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read updated sample file: %v", err)
+	}
+	if string(updated) != "hello maelstrom\n" {
+		t.Fatalf("updated file = %q, want hello maelstrom\\n", string(updated))
+	}
+	foundSummary := false
+	foundCommandResult := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.AssistantMessageRecord:
+			if v.Content == "The file was updated and validated." {
+				foundSummary = true
+			}
+		case logs.ToolCallResultRecord:
+			if v.ToolName == "run_command" && v.Content != "" {
+				foundCommandResult = true
+			}
+		}
+	}
+	if !foundSummary || !foundCommandResult {
+		t.Fatalf("expected summary and command result records, got %#v", sessionHistory.Records)
 	}
 	if len(providerScript.requests) != 4 {
 		t.Fatalf("got %d provider requests, want 4", len(providerScript.requests))
