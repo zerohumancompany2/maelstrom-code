@@ -83,3 +83,26 @@ func TestLoadIntoMemoryRoutesByKind(t *testing.T) {
 		t.Fatal("expected workflow in memory catalog")
 	}
 }
+
+func TestReloadReplacesExistingDefinition(t *testing.T) {
+	memory := NewMemory()
+	first := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: test-agent\ndescription: First description\nmodel: test-model\ncontext:\n  inputBudget: 10\n  projections: []\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      prompt: Observe first.\n  transitions: []\n")
+	second := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: test-agent\ndescription: Updated description\nmodel: test-model\ncontext:\n  inputBudget: 10\n  projections: []\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      prompt: Updated prompt.\n  transitions: []\n")
+
+	if err := LoadIntoMemory(memory, first); err != nil {
+		t.Fatalf("initial load: %v", err)
+	}
+	if err := memory.Reload(second); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	agent, ok := memory.GetAgent("test-agent")
+	if !ok {
+		t.Fatal("expected reloaded agent in memory")
+	}
+	if agent.Description != "Updated description" {
+		t.Fatalf("Description = %q, want Updated description", agent.Description)
+	}
+	if len(agent.Cognitive.States) != 1 || agent.Cognitive.States[0].Prompt != "Updated prompt." {
+		t.Fatalf("States = %+v, want updated prompt", agent.Cognitive.States)
+	}
+}

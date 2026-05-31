@@ -42,3 +42,7 @@ func (m *Memory) GetWorkflow(name string) (defs.WorkflowDefinition, bool) {
 	def, ok := m.Workflows[name]
 	return def, ok
 }
+
+func (m *Memory) Reload(raw []byte) error {
+	return LoadIntoMemory(m, raw)
+}
