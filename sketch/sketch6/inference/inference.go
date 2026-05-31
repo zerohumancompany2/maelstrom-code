@@ -1,19 +1,19 @@
 package inference
 
 import (
-	"github.com/comalice/inference_sketch/sketch/sketch6/agent"
 	"github.com/comalice/inference_sketch/sketch/sketch6/assembly"
 	"github.com/comalice/inference_sketch/sketch/sketch6/provider"
+	"github.com/comalice/inference_sketch/sketch/sketch6/runtime"
 )
 
 type Record struct {
 	InferenceID      string
 	PayloadID        string
 	SessionID        string
-	AgentID          string
-	AgentVersion     string
+	AgentName        string
+	LogicalModel     string
 	Provider         string
-	ModelName        string
+	ModelRef         string
 	GitCommit        string
 	AssemblyPipeline string
 	SourceRecordIDs  []string
@@ -26,15 +26,15 @@ type Recorder struct {
 	AssemblyPipeline string
 }
 
-func (r Recorder) RecordPayload(spec agent.Spec, payload assembly.InferencePayload, request provider.Request) Record {
+func (r Recorder) RecordPayload(agent runtime.Agent, payload assembly.InferencePayload, request provider.Request) Record {
 	return Record{
 		InferenceID:      payload.PayloadID + "-record",
 		PayloadID:        payload.PayloadID,
 		SessionID:        payload.SessionID,
-		AgentID:          payload.AgentID,
-		AgentVersion:     payload.AgentVersion,
-		Provider:         spec.Model.Provider,
-		ModelName:        spec.Model.Name,
+		AgentName:        payload.AgentName,
+		LogicalModel:     payload.LogicalModel,
+		Provider:         agent.ProviderName,
+		ModelRef:         agent.ProviderRef,
 		GitCommit:        r.GitCommit,
 		AssemblyPipeline: r.AssemblyPipeline,
 		SourceRecordIDs:  append([]string(nil), payload.SourceRecordIDs...),

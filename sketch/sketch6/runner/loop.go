@@ -8,30 +8,34 @@ import (
 	"github.com/comalice/inference_sketch/sketch/sketch6/charts"
 	"github.com/comalice/inference_sketch/sketch/sketch6/inference"
 	"github.com/comalice/inference_sketch/sketch/sketch6/provider"
+	"github.com/comalice/inference_sketch/sketch/sketch6/runtime"
 	"github.com/comalice/inference_sketch/sketch/sketch6/session"
 	"github.com/comalice/inference_sketch/sketch/sketch6/tools"
 )
 
 type Loop struct {
-	Assembler assembly.Assembler
-	Provider  provider.Provider
-	Tools     tools.Executor
-	Recorder  inference.Recorder
+	Provider provider.Provider
+	Tools    tools.Executor
+	Recorder inference.Recorder
 }
 
-func (l Loop) Run(spec agent.Spec, history *session.History, store *inference.Store) error {
+func (l Loop) Run(agent runtime.Agent, definition agent.Definition, history *session.History, store *inference.Store) error {
+	assembler, err := assembly.BuildAssembler(definition)
+	if err != nil {
+		return err
+	}
 	for iteration := 1; ; iteration++ {
-		assembled, err := l.Assembler.Assemble(assembly.Input{Agent: spec, History: history, Charts: charts.BuildSnapshot(history)})
+		assembled, err := assembler.Assemble(assembly.Input{Agent: agent, History: history, Charts: charts.BuildSnapshot(history)})
 		if err != nil {
 			return err
 		}
 
-		payload := assembly.BuildPayload(spec, history.NextBundleID(), history.SessionID, assembled)
-		request, err := l.Provider.BuildRequest(spec, payload)
+		payload := assembly.BuildPayload(agent, history.NextBundleID(), history.SessionID, assembled)
+		request, err := l.Provider.BuildRequest(agent, payload)
 		if err != nil {
 			return err
 		}
-		store.Append(l.Recorder.RecordPayload(spec, payload, request))
+		store.Append(l.Recorder.RecordPayload(agent, payload, request))
 
 		response, err := l.Provider.ParseResponse(request)
 		if err != nil {
@@ -40,7 +44,7 @@ func (l Loop) Run(spec agent.Spec, history *session.History, store *inference.St
 
 		hasToolCalls := false
 		for _, output := range response.Outputs {
-			records, err := l.consumeProviderOutput(spec, history, output)
+			records, err := l.consumeProviderOutput(agent, history, output)
 			if err != nil {
 				return err
 			}
@@ -61,13 +65,13 @@ func (l Loop) Run(spec agent.Spec, history *session.History, store *inference.St
 	}
 }
 
-func (l Loop) consumeProviderOutput(spec agent.Spec, history *session.History, output provider.Output) ([]session.Record, error) {
+func (l Loop) consumeProviderOutput(agent runtime.Agent, history *session.History, output provider.Output) ([]session.Record, error) {
 	switch v := output.(type) {
 	case provider.AssistantOutput:
 		return []session.Record{session.AssistantMessageRecord{BaseRecord: history.NextRecord("assistant"), Content: v.Content}}, nil
 	case provider.ToolRequestOutput:
 		requestRecord := session.ToolCallRequestRecord{BaseRecord: history.NextRecord("tool_call_request"), CallID: v.Call.CallID, ToolName: v.Call.ToolName, Arguments: string(v.Call.RawArgs)}
-		result, err := l.Tools.Execute(tools.ExecutionRequest{Agent: spec, Call: v, History: history, Request: requestRecord})
+		result, err := l.Tools.Execute(tools.ExecutionRequest{Agent: agent, Call: v, History: history, Request: requestRecord})
 		if err != nil {
 			return nil, err
 		}

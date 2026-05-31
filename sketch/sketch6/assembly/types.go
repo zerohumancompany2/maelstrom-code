@@ -3,6 +3,7 @@ package assembly
 import (
 	"github.com/comalice/inference_sketch/sketch/sketch6/agent"
 	"github.com/comalice/inference_sketch/sketch/sketch6/charts"
+	"github.com/comalice/inference_sketch/sketch/sketch6/runtime"
 	"github.com/comalice/inference_sketch/sketch/sketch6/session"
 )
 
@@ -45,7 +46,7 @@ func (s StateSegment) SourceRecordIDs() []string      { return append([]string(n
 func (s StateSegment) ProvenanceStep() ProvenanceStep { return s.Step }
 
 type Input struct {
-	Agent   agent.Spec
+	Agent   runtime.Agent
 	History *session.History
 	Charts  charts.Snapshot
 }
@@ -68,9 +69,30 @@ type ChunkResult struct {
 type InferencePayload struct {
 	PayloadID       string
 	SessionID       string
-	AgentID         string
-	AgentVersion    string
+	AgentName       string
+	LogicalModel    string
 	SourceRecordIDs []string
 	Segments        []Segment
 	Steps           []ProvenanceStep
 }
+
+func BuildAssembler(def agent.Definition) (Assembler, error) {
+	chunks := make([]Chunk, 0, len(def.Context.Chunks))
+	for _, chunk := range def.Context.Chunks {
+		switch chunk.Type {
+		case "system":
+			chunks = append(chunks, StaticSystemChunk{Prompt: chunk.Prompt})
+		case "messages":
+			chunks = append(chunks, RecentHistoryChunk{})
+		case "state":
+			chunks = append(chunks, StateProjectionChunk{ChartName: chunk.Chart})
+		default:
+			return Assembler{}, ErrUnknownChunkType{Type: chunk.Type}
+		}
+	}
+	return Assembler{Chunks: chunks}, nil
+}
+
+type ErrUnknownChunkType struct{ Type string }
+
+func (e ErrUnknownChunkType) Error() string { return "unknown context chunk type \"" + e.Type + "\"" }

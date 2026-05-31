@@ -14,16 +14,35 @@ import (
 )
 
 type Document struct {
-	APIVersion   string   `yaml:"apiVersion"`
-	Kind         string   `yaml:"kind"`
-	Name         string   `yaml:"name"`
-	Version      string   `yaml:"version"`
-	Provider     string   `yaml:"provider"`
-	Model        string   `yaml:"model"`
-	MaxHistory   int      `yaml:"max_history"`
-	ToolNames    []string `yaml:"tools"`
-	Temperature  float64  `yaml:"temperature"`
-	ContextLimit int      `yaml:"context_limit"`
+	APIVersion  string          `yaml:"apiVersion"`
+	Kind        string          `yaml:"kind"`
+	Name        string          `yaml:"name"`
+	Description string          `yaml:"description"`
+	Model       string          `yaml:"model"`
+	Overrides   OverridesDoc    `yaml:"overrides"`
+	ToolNames   []string        `yaml:"tools"`
+	Context     ContextDoc      `yaml:"context"`
+}
+
+type OverridesDoc struct {
+	Temperature     *float64 `yaml:"temperature"`
+	TopP            *float64 `yaml:"topP"`
+	MaxOutputTokens *int     `yaml:"maxOutputTokens"`
+}
+
+type ContextDoc struct {
+	InputBudget int        `yaml:"inputBudget"`
+	Chunks      []ChunkDoc `yaml:"chunks"`
+}
+
+type ChunkDoc struct {
+	Type      string  `yaml:"type"`
+	Prompt    string  `yaml:"prompt"`
+	Chart     string  `yaml:"chart"`
+	Flexible  bool    `yaml:"flexible"`
+	Policy    string  `yaml:"policy"`
+	Priority  int     `yaml:"priority"`
+	BudgetPct float64 `yaml:"budgetPct"`
 }
 
 type Decoder struct{}
@@ -38,30 +57,54 @@ func (Decoder) Decode(data []byte) (Document, error) {
 
 type Hoister struct{}
 
-func (Hoister) Hoist(doc Document) (coreagent.Spec, error) {
+func (Hoister) Hoist(doc Document) (coreagent.Definition, error) {
 	if strings.TrimSpace(doc.APIVersion) == "" {
-		return coreagent.Spec{}, fmt.Errorf("agent apiVersion required")
+		return coreagent.Definition{}, fmt.Errorf("agent apiVersion required")
 	}
 	if doc.Kind != "Agent" {
-		return coreagent.Spec{}, fmt.Errorf("agent kind must be Agent")
+		return coreagent.Definition{}, fmt.Errorf("agent kind must be Agent")
 	}
 	if strings.TrimSpace(doc.Name) == "" {
-		return coreagent.Spec{}, fmt.Errorf("agent name required")
+		return coreagent.Definition{}, fmt.Errorf("agent name required")
 	}
 	if strings.TrimSpace(doc.Model) == "" {
-		return coreagent.Spec{}, fmt.Errorf("agent model required")
+		return coreagent.Definition{}, fmt.Errorf("agent model required")
 	}
-	return coreagent.Spec{
-		ID:        doc.Name,
-		Version:   doc.Version,
-		Model:     coreagent.ModelSpec{Provider: doc.Provider, Name: doc.Model, Temperature: doc.Temperature, ContextLimit: doc.ContextLimit},
-		Context:   coreagent.ContextSpec{MaxHistoryItems: doc.MaxHistory},
-		ToolNames: append([]string(nil), doc.ToolNames...),
+	return coreagent.Definition{
+		Name:        strings.TrimSpace(doc.Name),
+		Description: strings.TrimSpace(doc.Description),
+		Model:       strings.TrimSpace(doc.Model),
+		Overrides: coreagent.Overrides{
+			Temperature:     doc.Overrides.Temperature,
+			TopP:            doc.Overrides.TopP,
+			MaxOutputTokens: doc.Overrides.MaxOutputTokens,
+		},
+		Tools: append([]string(nil), doc.ToolNames...),
+		Context: coreagent.ContextDefinition{
+			InputBudget: doc.Context.InputBudget,
+			Chunks:      hoistChunks(doc.Context.Chunks),
+		},
 	}, nil
 }
 
-func NewIngestor(store registry.Store[coreagent.Spec], reg registry.Registry[coreagent.Spec]) registry.Ingestor[Document, coreagent.Spec] {
-	return registry.Ingestor[Document, coreagent.Spec]{
+func hoistChunks(chunks []ChunkDoc) []coreagent.ChunkDefinition {
+	result := make([]coreagent.ChunkDefinition, 0, len(chunks))
+	for _, chunk := range chunks {
+		result = append(result, coreagent.ChunkDefinition{
+			Type:      strings.TrimSpace(chunk.Type),
+			Prompt:    chunk.Prompt,
+			Chart:     strings.TrimSpace(chunk.Chart),
+			Flexible:  chunk.Flexible,
+			Policy:    strings.TrimSpace(chunk.Policy),
+			Priority:  chunk.Priority,
+			BudgetPct: chunk.BudgetPct,
+		})
+	}
+	return result
+}
+
+func NewIngestor(store registry.Store[coreagent.Definition], reg registry.Registry[coreagent.Definition]) registry.Ingestor[Document, coreagent.Definition] {
+	return registry.Ingestor[Document, coreagent.Definition]{
 		Decoder:  Decoder{},
 		Hoister:  Hoister{},
 		Store:    store,
@@ -74,7 +117,7 @@ func NewIngestor(store registry.Store[coreagent.Spec], reg registry.Registry[cor
 }
 
 type FileIngestor struct {
-	Ingestor registry.Ingestor[Document, coreagent.Spec]
+	Ingestor registry.Ingestor[Document, coreagent.Definition]
 }
 
 func (f FileIngestor) IngestFile(ctx context.Context, path string) error {

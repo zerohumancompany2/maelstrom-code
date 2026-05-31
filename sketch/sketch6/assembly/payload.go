@@ -3,10 +3,10 @@ package assembly
 import (
 	"sort"
 
-	"github.com/comalice/inference_sketch/sketch/sketch6/agent"
+	"github.com/comalice/inference_sketch/sketch/sketch6/runtime"
 )
 
-func BuildPayload(agentSpec agent.Spec, payloadID, sessionID string, assembled Result) InferencePayload {
+func BuildPayload(agentSpec runtime.Agent, payloadID, sessionID string, assembled Result) InferencePayload {
 	sourceSet := map[string]struct{}{}
 	for _, segment := range assembled.Segments {
 		for _, id := range segment.SourceRecordIDs() {
@@ -18,5 +18,5 @@ func BuildPayload(agentSpec agent.Spec, payloadID, sessionID string, assembled R
 		sourceIDs = append(sourceIDs, id)
 	}
 	sort.Strings(sourceIDs)
-	return InferencePayload{PayloadID: payloadID, SessionID: sessionID, AgentID: agentSpec.ID, AgentVersion: agentSpec.Version, SourceRecordIDs: sourceIDs, Segments: append([]Segment(nil), assembled.Segments...), Steps: append([]ProvenanceStep(nil), assembled.Steps...)}
+	return InferencePayload{PayloadID: payloadID, SessionID: sessionID, AgentName: agentSpec.Name, LogicalModel: agentSpec.LogicalModel, SourceRecordIDs: sourceIDs, Segments: append([]Segment(nil), assembled.Segments...), Steps: append([]ProvenanceStep(nil), assembled.Steps...)}
 }

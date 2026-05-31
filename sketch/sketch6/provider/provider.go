@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/comalice/inference_sketch/sketch/sketch6/agent"
 	"github.com/comalice/inference_sketch/sketch/sketch6/assembly"
+	"github.com/comalice/inference_sketch/sketch/sketch6/runtime"
 )
 
 type Output interface{ output() }
@@ -32,7 +32,7 @@ func (ToolRequestOutput) output() {}
 type Request struct {
 	PayloadID string
 	Provider  string
-	ModelName string
+	ModelRef  string
 	Lines     []string
 }
 
@@ -41,13 +41,13 @@ type Response struct {
 }
 
 type Provider interface {
-	BuildRequest(spec agent.Spec, payload assembly.InferencePayload) (Request, error)
+	BuildRequest(agent runtime.Agent, payload assembly.InferencePayload) (Request, error)
 	ParseResponse(request Request) (Response, error)
 }
 
 type Stub struct{}
 
-func (Stub) BuildRequest(spec agent.Spec, payload assembly.InferencePayload) (Request, error) {
+func (Stub) BuildRequest(agent runtime.Agent, payload assembly.InferencePayload) (Request, error) {
 	lines := make([]string, 0, len(payload.Segments))
 	for _, segment := range payload.Segments {
 		switch v := segment.(type) {
@@ -59,7 +59,7 @@ func (Stub) BuildRequest(spec agent.Spec, payload assembly.InferencePayload) (Re
 			lines = append(lines, fmt.Sprintf("segment=%s content=%q", segment.SegmentKind(), segment.TokenText()))
 		}
 	}
-	return Request{PayloadID: payload.PayloadID, Provider: spec.Model.Provider, ModelName: spec.Model.Name, Lines: lines}, nil
+	return Request{PayloadID: payload.PayloadID, Provider: agent.ProviderName, ModelRef: agent.ProviderRef, Lines: lines}, nil
 }
 
 func (Stub) ParseResponse(request Request) (Response, error) {

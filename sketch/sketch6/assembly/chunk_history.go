@@ -11,7 +11,7 @@ type RecentHistoryChunk struct{}
 func (RecentHistoryChunk) Name() string { return "recent-history" }
 
 func (RecentHistoryChunk) Build(input Input) (ChunkResult, error) {
-	limit := input.Agent.Context.MaxHistoryItems
+	limit := input.Agent.MaxHistoryItems
 	start := len(input.History.Records) - limit
 	if start < 0 {
 		start = 0
