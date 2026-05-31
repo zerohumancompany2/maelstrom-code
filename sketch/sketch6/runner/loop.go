@@ -11,6 +11,7 @@ import (
 	"github.com/comalice/inference_sketch/sketch/sketch6/runtime"
 	"github.com/comalice/inference_sketch/sketch/sketch6/session"
 	"github.com/comalice/inference_sketch/sketch/sketch6/tools"
+	"github.com/comalice/inference_sketch/sketch/sketch6/workflow"
 )
 
 type Loop struct {
@@ -19,23 +20,29 @@ type Loop struct {
 	Recorder inference.Recorder
 }
 
-func (l Loop) Run(agent runtime.Agent, definition agent.Definition, history *session.History, store *inference.Store) error {
+func (l Loop) Run(agentRuntime runtime.Agent, definition agent.Definition, workflowSnapshot *runtime.WorkflowSnapshot, binding runtime.BindingSnapshot, history *session.History, workflowHistory *workflow.History, store *inference.Store) error {
 	plan, err := assembly.BuildPlan(definition)
 	if err != nil {
 		return err
 	}
 	for iteration := 1; ; iteration++ {
-		assembled, err := plan.Assembler.Assemble(assembly.Input{Agent: agent, History: history, Charts: charts.BuildSnapshot(history), MaxHistoryItems: plan.MaxHistoryItems})
+		cognitiveState := charts.BuildSnapshot(history).State("agent")
+		if cognitiveState == "idle" && definition.Cognitive.InitialState != "" {
+			cognitiveState = definition.Cognitive.InitialState
+		}
+		cognitive := runtime.ReduceCognitiveState(cognitiveState, BuildCognitiveStateMap(definition))
+		view := runtime.RuntimeView{Agent: agentRuntime, Cognitive: cognitive, Binding: binding, Workflow: runtime.ReduceWorkflowState(DeriveWorkflowSnapshot(workflowHistory, workflowSnapshot), binding)}
+		assembled, err := plan.Assembler.Assemble(assembly.Input{RuntimeView: view, History: history, Charts: charts.BuildSnapshot(history), MaxHistoryItems: plan.MaxHistoryItems})
 		if err != nil {
 			return err
 		}
 
-		payload := assembly.BuildPayload(agent, history.NextBundleID(), history.SessionID, assembled)
-		request, err := l.Provider.BuildRequest(agent, payload)
+		payload := assembly.BuildPayload(agentRuntime, history.NextBundleID(), history.SessionID, assembled)
+		request, err := l.Provider.BuildRequest(agentRuntime, payload)
 		if err != nil {
 			return err
 		}
-		store.Append(l.Recorder.RecordPayload(agent, payload, request))
+		store.Append(l.Recorder.RecordPayload(agentRuntime, payload, request))
 
 		response, err := l.Provider.ParseResponse(request)
 		if err != nil {
@@ -44,7 +51,7 @@ func (l Loop) Run(agent runtime.Agent, definition agent.Definition, history *ses
 
 		hasToolCalls := false
 		for _, output := range response.Outputs {
-			records, err := l.consumeProviderOutput(agent, history, output)
+			records, err := l.consumeProviderOutput(agentRuntime, history, output)
 			if err != nil {
 				return err
 			}
@@ -59,19 +66,46 @@ func (l Loop) Run(agent runtime.Agent, definition agent.Definition, history *ses
 		if !hasToolCalls {
 			return nil
 		}
-		if iteration == 5 {
+		if iteration == 8 {
 			return fmt.Errorf("loop guard tripped")
 		}
 	}
 }
 
-func (l Loop) consumeProviderOutput(agent runtime.Agent, history *session.History, output provider.Output) ([]session.Record, error) {
+func BuildCognitiveStateMap(definition agent.Definition) map[string]runtime.CognitiveSnapshot {
+	states := map[string]runtime.CognitiveSnapshot{}
+	for _, state := range definition.Cognitive.States {
+		states[state.Name] = runtime.CognitiveSnapshot{CurrentState: state.Name, VisibleTools: append([]string(nil), state.VisibleTools...), EnabledTools: append([]string(nil), state.EnabledTools...), Prompt: state.Prompt}
+	}
+	return states
+}
+
+func DeriveWorkflowSnapshot(history *workflow.History, base *runtime.WorkflowSnapshot) runtime.WorkflowSnapshot {
+	if base == nil {
+		return runtime.WorkflowSnapshot{}
+	}
+	result := *base
+	for i := len(history.Records) - 1; i >= 0; i-- {
+		switch v := history.Records[i].(type) {
+		case workflow.StateTransitionRecord:
+			result.CurrentState = v.ToState
+			return result
+		case workflow.BindingRefRecord:
+			if result.LastBoundAgent == "" && v.Action == "bind" {
+				result.LastBoundAgent = v.AgentID
+			}
+		}
+	}
+	return result
+}
+
+func (l Loop) consumeProviderOutput(agentRuntime runtime.Agent, history *session.History, output provider.Output) ([]session.Record, error) {
 	switch v := output.(type) {
 	case provider.AssistantOutput:
 		return []session.Record{session.AssistantMessageRecord{BaseRecord: history.NextRecord("assistant"), Content: v.Content}}, nil
 	case provider.ToolRequestOutput:
 		requestRecord := session.ToolCallRequestRecord{BaseRecord: history.NextRecord("tool_call_request"), CallID: v.Call.CallID, ToolName: v.Call.ToolName, Arguments: string(v.Call.RawArgs)}
-		result, err := l.Tools.Execute(tools.ExecutionRequest{Agent: agent, Call: v, History: history, Request: requestRecord})
+		result, err := l.Tools.Execute(tools.ExecutionRequest{Agent: agentRuntime, Call: v, History: history, Request: requestRecord})
 		if err != nil {
 			return nil, err
 		}

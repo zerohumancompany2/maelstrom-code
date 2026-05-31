@@ -2,12 +2,6 @@ package workflow
 
 import "fmt"
 
-type Instance struct {
-	ID     string
-	SpecID string
-	Input  string
-}
-
 type Record interface {
 	RecordID() string
 	RecordKind() string
@@ -36,6 +30,12 @@ type BindingRefRecord struct {
 	Action    string
 }
 
+type NoteRecord struct {
+	BaseRecord
+	AuthorAgent string
+	Content     string
+}
+
 type History struct {
 	WorkflowID string
 	Records    []Record
@@ -61,6 +61,8 @@ func DescribeRecord(record Record) string {
 		return fmt.Sprintf("%s workflow_state_transition(from=%s to=%s trigger=%s from_records=%v)", v.RecordID(), v.FromState, v.ToState, v.Trigger, v.DerivedFromIDs)
 	case BindingRefRecord:
 		return fmt.Sprintf("%s workflow_binding_ref(binding=%s agent=%s action=%s)", v.RecordID(), v.BindingID, v.AgentID, v.Action)
+	case NoteRecord:
+		return fmt.Sprintf("%s workflow_note(agent=%s content=%q)", v.RecordID(), v.AuthorAgent, v.Content)
 	default:
 		return fmt.Sprintf("unknown(%T)", record)
 	}

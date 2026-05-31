@@ -71,6 +71,9 @@ func validateAgentDefinition(def agent.Definition, modelDef model.Definition, to
 	if modelDef.Limits.ContextWindow > 0 && def.Context.InputBudget > modelDef.Limits.ContextWindow {
 		return fmt.Errorf("agent inputBudget %d exceeds model contextWindow %d", def.Context.InputBudget, modelDef.Limits.ContextWindow)
 	}
+	if strings.TrimSpace(def.Cognitive.InitialState) == "" {
+		return fmt.Errorf("agent cognitive initialState required")
+	}
 	if _, err := assembly.BuildPlan(def); err != nil {
 		return err
 	}
@@ -85,7 +88,7 @@ func validateAgentDefinition(def agent.Definition, modelDef model.Definition, to
 			if strings.TrimSpace(chunk.Prompt) == "" {
 				return fmt.Errorf("system chunk prompt required")
 			}
-		case "messages":
+		case "messages", "cognitive_state", "workflow_state", "binding":
 		case "state":
 			if strings.TrimSpace(chunk.Chart) == "" {
 				return fmt.Errorf("state chunk chart required")

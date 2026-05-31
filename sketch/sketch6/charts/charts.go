@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/comalice/inference_sketch/sketch/sketch6/agent"
 	"github.com/comalice/inference_sketch/sketch/sketch6/session"
+	"github.com/comalice/inference_sketch/sketch/sketch6/workflow"
 	"github.com/qmuntal/stateless"
 )
 
@@ -27,6 +29,22 @@ func BuildSnapshot(history *session.History) Snapshot {
 	return Snapshot{States: states}
 }
 
+func BuildWorkflowSnapshot(def workflow.Definition, history *workflow.History) Snapshot {
+	initial := def.Statechart.InitialState
+	if initial == "" {
+		initial = "idle"
+	}
+	states := map[string]string{"workflow": initial}
+	for _, record := range history.Records {
+		transition, ok := record.(workflow.StateTransitionRecord)
+		if !ok {
+			continue
+		}
+		states["workflow"] = transition.ToState
+	}
+	return Snapshot{States: states}
+}
+
 func (s Snapshot) State(chartName string) string {
 	if state, ok := s.States[chartName]; ok {
 		return state
@@ -42,10 +60,10 @@ type Set struct {
 	charts map[string]*Definition
 }
 
-func NewSet() Set {
+func NewSet(agentDef agent.Definition, workflowDef workflow.Definition) Set {
 	return Set{charts: map[string]*Definition{
-		"agent":    buildAgentChart(),
-		"workflow": buildWorkflowChart(),
+		"agent":    FromAgentStatechart(agentDef.Cognitive),
+		"workflow": FromWorkflowStatechart(workflowDef.Statechart),
 	}}
 }
 
@@ -58,8 +76,9 @@ func (s Set) Fire(chartName, currentState, trigger string) (string, error) {
 }
 
 type Definition struct {
-	name        string
-	transitions map[string]map[string]string
+	name         string
+	initialState string
+	transitions  map[string]map[string]string
 }
 
 func (d *Definition) Fire(currentState, trigger string) (string, error) {
@@ -84,16 +103,24 @@ func (d *Definition) Fire(currentState, trigger string) (string, error) {
 	return result, nil
 }
 
-func buildAgentChart() *Definition {
-	return &Definition{name: "agent", transitions: map[string]map[string]string{
-		"idle":        {"start_research": "researching"},
-		"researching": {"draft_answer": "answering"},
-	}}
+func FromAgentStatechart(def agent.StatechartDefinition) *Definition {
+	transitions := map[string]map[string]string{}
+	for _, transition := range def.Transitions {
+		if _, ok := transitions[transition.From]; !ok {
+			transitions[transition.From] = map[string]string{}
+		}
+		transitions[transition.From][transition.Trigger] = transition.To
+	}
+	return &Definition{name: "agent", initialState: def.InitialState, transitions: transitions}
 }
 
-func buildWorkflowChart() *Definition {
-	return &Definition{name: "workflow", transitions: map[string]map[string]string{
-		"idle":           {"begin_lookup": "lookup_pending"},
-		"lookup_pending": {"weather_received": "data_ready"},
-	}}
+func FromWorkflowStatechart(def workflow.StatechartDefinition) *Definition {
+	transitions := map[string]map[string]string{}
+	for _, transition := range def.Transitions {
+		if _, ok := transitions[transition.From]; !ok {
+			transitions[transition.From] = map[string]string{}
+		}
+		transitions[transition.From][transition.Trigger] = transition.To
+	}
+	return &Definition{name: "workflow", initialState: def.InitialState, transitions: transitions}
 }

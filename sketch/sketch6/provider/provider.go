@@ -63,21 +63,23 @@ func (Stub) BuildRequest(agent runtime.Agent, payload assembly.InferencePayload)
 }
 
 func (Stub) ParseResponse(request Request) (Response, error) {
-	agentState := extractState(request.Lines, "agent")
-	workflowState := extractState(request.Lines, "workflow")
+	cognitive := extractQuoted(request.Lines, "Cognitive mode: ")
+	workflowState := extractQuoted(request.Lines, "Workflow workflow-001 is in state ")
 	switch {
-	case agentState == "idle":
+	case strings.HasPrefix(cognitive, "observe"):
 		return Response{Outputs: []Output{mustToolRequest("call_agent_1", "transition_state", map[string]string{"chart": "agent", "trigger": "start_research"})}}, nil
-	case workflowState == "idle":
+	case strings.HasPrefix(cognitive, "orient") && strings.HasPrefix(workflowState, "available"):
 		return Response{Outputs: []Output{mustToolRequest("call_workflow_1", "transition_state", map[string]string{"chart": "workflow", "trigger": "begin_lookup"})}}, nil
-	case workflowState == "lookup_pending":
+	case strings.HasPrefix(cognitive, "orient") && strings.HasPrefix(workflowState, "lookup_pending"):
+		return Response{Outputs: []Output{mustToolRequest("call_agent_2", "transition_state", map[string]string{"chart": "agent", "trigger": "begin_action"})}}, nil
+	case strings.HasPrefix(cognitive, "act") && strings.HasPrefix(workflowState, "lookup_pending"):
 		return Response{Outputs: []Output{mustToolRequest("call_weather_1", "weather", map[string]string{"location": "Paris"})}}, nil
-	case workflowState == "data_ready" && agentState == "researching":
-		return Response{Outputs: []Output{mustToolRequest("call_agent_2", "transition_state", map[string]string{"chart": "agent", "trigger": "draft_answer"})}}, nil
-	case workflowState == "data_ready" && agentState == "answering":
+	case strings.HasPrefix(cognitive, "act") && strings.HasPrefix(workflowState, "data_ready"):
+		return Response{Outputs: []Output{mustToolRequest("call_agent_3", "transition_state", map[string]string{"chart": "agent", "trigger": "draft_answer"})}}, nil
+	case strings.HasPrefix(cognitive, "observe") && strings.HasPrefix(workflowState, "data_ready"):
 		return Response{Outputs: []Output{AssistantOutput{Content: "It is 70C, rainy, with winds out of the SSW in Paris."}}}, nil
 	default:
-		return Response{Outputs: []Output{AssistantOutput{Content: fmt.Sprintf("unexpected state combination: agent=%s workflow=%s", agentState, workflowState)}}}, nil
+		return Response{Outputs: []Output{AssistantOutput{Content: fmt.Sprintf("unexpected state combination: cognitive=%s workflow=%s", cognitive, workflowState)}}}, nil
 	}
 }
 
@@ -95,12 +97,19 @@ func mustToolRequest(callID, toolName string, args map[string]string) ToolReques
 	return ToolRequestOutput{Call: ToolCall{CallID: callID, ToolName: toolName, Arguments: normalized, RawArgs: raw}}
 }
 
-func extractState(lines []string, chart string) string {
-	prefix := fmt.Sprintf("state=%s value=", chart)
+func extractQuoted(lines []string, prefix string) string {
 	for _, line := range lines {
-		if strings.HasPrefix(line, prefix) {
-			return strings.Trim(line[len(prefix):], `"`)
+		if !strings.Contains(line, prefix) {
+			continue
 		}
+		idx := strings.Index(line, prefix)
+		value := line[idx+len(prefix):]
+		value = strings.TrimSpace(value)
+		value = strings.TrimPrefix(value, "\"")
+		if quote := strings.Index(value, "\""); quote >= 0 {
+			value = value[:quote]
+		}
+		return value
 	}
 	return ""
 }
