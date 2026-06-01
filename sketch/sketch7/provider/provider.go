@@ -3,7 +3,6 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/comalice/inference_sketch/sketch/sketch7/prompt"
 	"github.com/comalice/inference_sketch/sketch/sketch7/runtime"
@@ -64,27 +63,10 @@ type Provider interface {
 
 func BuildRequest(agent runtime.Agent, payload prompt.Payload, tools []ToolDefinition) (Request, error) {
 	lines := make([]RequestLine, 0, len(payload.Segments))
-	lastToolCallID := ""
-	lastToolName := ""
 	for _, segment := range payload.Segments {
 		switch v := segment.(type) {
 		case prompt.PromptSegment:
-			line := RequestLine{Kind: "prompt", Role: v.Role, Content: v.Content}
-			if v.Role == "assistant_tool_call" {
-				callName, callArgs := parseAssistantToolCallText(v.Content)
-				lastToolCallID = firstRecordID(v.RecordIDs)
-				if lastToolCallID == "" {
-					lastToolCallID = callName + "-call"
-				}
-				lastToolName = callName
-				line.Name = callName
-				line.Content = callArgs
-				line.CallID = lastToolCallID
-			}
-			if v.Role == "tool" {
-				line.CallID = lastToolCallID
-				line.Name = lastToolName
-			}
+			line := RequestLine{Kind: "prompt", Role: v.Role, Name: v.Name, Content: v.Content, CallID: v.CallID}
 			lines = append(lines, line)
 		case prompt.StateSegment:
 			lines = append(lines, RequestLine{Kind: "state", Name: v.Name, Content: v.State})
@@ -99,27 +81,4 @@ func BuildRequest(agent runtime.Agent, payload prompt.Payload, tools []ToolDefin
 		Lines:     lines,
 		Tools:     append([]ToolDefinition(nil), tools...),
 	}, nil
-}
-
-func parseAssistantToolCallText(content string) (string, string) {
-	trimmed := strings.TrimSpace(content)
-	trimmed = strings.TrimPrefix(trimmed, "tool call ")
-	open := strings.Index(trimmed, "(")
-	close := strings.LastIndex(trimmed, ")")
-	if open == -1 || close == -1 || close < open {
-		return trimmed, "{}"
-	}
-	name := strings.TrimSpace(trimmed[:open])
-	args := strings.TrimSpace(trimmed[open+1 : close])
-	if args == "" {
-		args = "{}"
-	}
-	return name, args
-}
-
-func firstRecordID(ids []string) string {
-	if len(ids) == 0 {
-		return ""
-	}
-	return ids[0]
 }

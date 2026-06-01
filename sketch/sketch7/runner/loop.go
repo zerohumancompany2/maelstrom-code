@@ -3,6 +3,7 @@ package runner
 import (
 	"fmt"
 
+	ctxpkg "github.com/comalice/inference_sketch/sketch/sketch7/context"
 	"github.com/comalice/inference_sketch/sketch/sketch7/defs"
 	"github.com/comalice/inference_sketch/sketch/sketch7/logs"
 	"github.com/comalice/inference_sketch/sketch/sketch7/prompt"
@@ -20,19 +21,16 @@ type Loop struct {
 
 func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDef *defs.WorkflowDefinition, sessionHistory *logs.SessionHistory, workflowHistory *logs.WorkflowHistory) error {
 	assembler := prompt.Assembler{Projections: l.Projections}
+	contextBuilder := ctxpkg.Builder{MaxMessages: l.MaxHistory}
 	for iteration := 1; ; iteration++ {
 		view := BuildSessionView(agent, agentDef, workflowDef, sessionHistory, workflowHistory)
-		assembled, err := assembler.Assemble(prompt.Input{
-			Session:    view,
-			History:    sessionHistory,
-			Workflow:   workflowHistory,
-			MaxHistory: l.MaxHistory,
-		})
+		inferencePayload := contextBuilder.Build(sessionHistory.NextBundleID(), ctxpkg.BuildSections(agentDef, view), view, sessionHistory, workflowHistory)
+		assembled, err := assembler.Assemble(prompt.Input{Payload: inferencePayload})
 		if err != nil {
 			return err
 		}
 
-		payload := prompt.BuildPayload(agent, sessionHistory.NextBundleID(), sessionHistory.SessionID, assembled)
+		payload := prompt.BuildPayload(agent, inferencePayload.PayloadID, sessionHistory.SessionID, assembled)
 		request, err := l.Provider.BuildRequest(agent, payload, toolDefinitions(l.Tools))
 		if err != nil {
 			return err

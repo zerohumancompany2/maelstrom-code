@@ -73,14 +73,15 @@ func TestRecentHistoryProjectionRespectsHistoryLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(result.Segments) != 2 {
-		t.Fatalf("got %d segments, want 2", len(result.Segments))
+	if len(result.Segments) != 3 {
+		t.Fatalf("got %d segments, want 3", len(result.Segments))
 	}
 
 	first, _ := result.Segments[0].(PromptSegment)
 	second, _ := result.Segments[1].(PromptSegment)
-	if first.Content != "second" || second.Content != "third" {
-		t.Fatalf("got contents %q, %q; want second, third", first.Content, second.Content)
+	third, _ := result.Segments[2].(PromptSegment)
+	if first.Content != "first" || second.Content != "second" || third.Content != "third" {
+		t.Fatalf("got contents %q, %q, %q; want first, second, third", first.Content, second.Content, third.Content)
 	}
 }
 

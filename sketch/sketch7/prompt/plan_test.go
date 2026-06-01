@@ -20,11 +20,11 @@ func TestBuildProjectionPlanBuildsKnownProjectionTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(projections) != 6 {
-		t.Fatalf("got %d projections, want 6", len(projections))
+	if len(projections) != 1 {
+		t.Fatalf("got %d projections, want 1 context projection", len(projections))
 	}
-	if maxHistory != 10 {
-		t.Fatalf("MaxHistory = %d, want 10", maxHistory)
+	if maxHistory != 12 {
+		t.Fatalf("MaxHistory = %d, want 12", maxHistory)
 	}
 }
 

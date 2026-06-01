@@ -100,3 +100,33 @@ func TestToolRequestOutputCarriesStructuredArguments(t *testing.T) {
 		t.Fatalf("Arguments[path] = %q, want ./...", tool.Call.Arguments["path"])
 	}
 }
+
+func TestBuildRequestPreservesToolReplayMetadata(t *testing.T) {
+	agent := runtime.Agent{ProviderName: "openrouter", ProviderRef: "gpt-test"}
+	step := prompt.ProvenanceStep{ProjectionName: "history", Operation: "project-history"}
+	payload := prompt.Payload{
+		PayloadID: "payload-tool-replay",
+		Segments: []prompt.Segment{
+			prompt.PromptSegment{Role: "user", Content: "Find the file.", Step: step},
+			prompt.PromptSegment{Role: "assistant_tool_call", Name: "search_files", CallID: "call-123", Content: `{"pattern":"replace_text"}`, Step: step},
+			prompt.PromptSegment{Role: "tool", Name: "search_files", CallID: "call-123", Content: "Backend: rg\nmatch", Step: step},
+		},
+	}
+
+	request, err := BuildRequest(agent, payload, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(request.Lines) != 3 {
+		t.Fatalf("got %d lines, want 3", len(request.Lines))
+	}
+	if request.Lines[1].Role != "assistant_tool_call" || request.Lines[1].Name != "search_files" || request.Lines[1].CallID != "call-123" {
+		t.Fatalf("tool call replay line = %+v, want preserved tool metadata", request.Lines[1])
+	}
+	if request.Lines[2].Role != "tool" || request.Lines[2].Name != "search_files" || request.Lines[2].CallID != "call-123" {
+		t.Fatalf("tool result replay line = %+v, want preserved tool metadata", request.Lines[2])
+	}
+	if request.Lines[2].Content != "Backend: rg\nmatch" {
+		t.Fatalf("tool result content = %q, want preserved content", request.Lines[2].Content)
+	}
+}

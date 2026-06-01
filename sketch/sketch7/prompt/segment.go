@@ -9,6 +9,8 @@ type Segment interface {
 
 type PromptSegment struct {
 	Role      string
+	Name      string
+	CallID    string
 	Content   string
 	RecordIDs []string
 	Step      ProvenanceStep

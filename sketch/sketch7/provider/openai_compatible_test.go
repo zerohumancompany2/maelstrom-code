@@ -83,3 +83,38 @@ func TestOpenAICompatibleProviderImplementsProviderContractBuildRequest(t *testi
 		t.Fatalf("ModelRef = %q, want local-model", request.ModelRef)
 	}
 }
+
+func TestOpenAICompatibleProviderBuildsToolReplayMessages(t *testing.T) {
+	p := &OpenAICompatibleProvider{}
+	body, err := p.buildHTTPBody(Request{
+		ModelRef: "local-model",
+		Lines: []RequestLine{
+			{Kind: "prompt", Role: "user", Content: "Find replace_text."},
+			{Kind: "prompt", Role: "assistant_tool_call", Name: "search_files", CallID: "call-123", Content: `{"pattern":"replace_text"}`},
+			{Kind: "prompt", Role: "tool", Name: "search_files", CallID: "call-123", Content: "Backend: rg\nsketch/sketch7/tools/replace_text.go:16: Name: replace_text"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	messages, ok := decoded["messages"].([]any)
+	if !ok || len(messages) != 3 {
+		t.Fatalf("messages = %#v, want 3 messages", decoded["messages"])
+	}
+	assistantMsg := messages[1].(map[string]any)
+	if assistantMsg["role"] != "assistant" {
+		t.Fatalf("assistant replay role = %v, want assistant", assistantMsg["role"])
+	}
+	toolCalls, ok := assistantMsg["tool_calls"].([]any)
+	if !ok || len(toolCalls) != 1 {
+		t.Fatalf("tool_calls = %#v, want 1 call", assistantMsg["tool_calls"])
+	}
+	toolMsg := messages[2].(map[string]any)
+	if toolMsg["role"] != "tool" || toolMsg["tool_call_id"] != "call-123" {
+		t.Fatalf("tool replay message = %#v, want tool role with call id", toolMsg)
+	}
+}
