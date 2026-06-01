@@ -36,7 +36,7 @@ func TestReloadedAgentDefinitionAffectsSubsequentRun(t *testing.T) {
 	}
 	sessionHistoryV1 := logs.NewSessionHistory("session-reload-1")
 	viewV1 := BuildSessionView(hydratedV1, agentDefV1, nil, sessionHistoryV1, nil)
-	payloadV1 := ctxpkg.Builder{MaxMessages: 12}.Build("payload-reload-v1", ctxpkg.BuildSections(agentDefV1, viewV1), viewV1, sessionHistoryV1, nil)
+	payloadV1 := ctxpkg.Builder{MaxMessages: 12}.Build("payload-reload-v1", ctxpkg.BuildSections(agentDefV1, viewV1, sessionHistoryV1, ctxpkg.RepoContextOptions{}), viewV1, sessionHistoryV1, nil)
 	assembledV1, err := prompt.Assembler{Projections: projectionsV1}.Assemble(prompt.Input{Payload: payloadV1, Session: viewV1, History: sessionHistoryV1})
 	if err != nil {
 		t.Fatalf("assemble v1: %v", err)
@@ -59,7 +59,7 @@ func TestReloadedAgentDefinitionAffectsSubsequentRun(t *testing.T) {
 	}
 	sessionHistoryV2 := logs.NewSessionHistory("session-reload-2")
 	viewV2 := BuildSessionView(hydratedV2, agentDefV2, nil, sessionHistoryV2, nil)
-	payloadV2 := ctxpkg.Builder{MaxMessages: 12}.Build("payload-reload-v2", ctxpkg.BuildSections(agentDefV2, viewV2), viewV2, sessionHistoryV2, nil)
+	payloadV2 := ctxpkg.Builder{MaxMessages: 12}.Build("payload-reload-v2", ctxpkg.BuildSections(agentDefV2, viewV2, sessionHistoryV2, ctxpkg.RepoContextOptions{}), viewV2, sessionHistoryV2, nil)
 	assembledV2, err := prompt.Assembler{Projections: projectionsV2}.Assemble(prompt.Input{Payload: payloadV2, Session: viewV2, History: sessionHistoryV2})
 	if err != nil {
 		t.Fatalf("assemble v2: %v", err)
@@ -97,7 +97,7 @@ func TestReloadedWorkflowDefinitionAffectsSubsequentRun(t *testing.T) {
 	sessionHistory.Append(logs.SessionWorkflowBindingRecord{SessionBaseRecord: sessionHistory.NextRecord("workflow_binding_ref"), BindingID: "bind-wf", WorkflowID: "workflow-instance", Action: "bind"})
 	workflowHistory := logs.NewWorkflowHistory("workflow-instance")
 	viewWfV1 := BuildSessionView(hydrated, agentDef, &workflowDefV1, sessionHistory, workflowHistory)
-	payloadWfV1 := ctxpkg.Builder{MaxMessages: 12}.Build("payload-workflow-v1", ctxpkg.BuildSections(agentDef, viewWfV1), viewWfV1, sessionHistory, workflowHistory)
+	payloadWfV1 := ctxpkg.Builder{MaxMessages: 12}.Build("payload-workflow-v1", ctxpkg.BuildSections(agentDef, viewWfV1, sessionHistory, ctxpkg.RepoContextOptions{}), viewWfV1, sessionHistory, workflowHistory)
 	assembledV1, err := prompt.Assembler{Projections: projections}.Assemble(prompt.Input{Payload: payloadWfV1, Session: viewWfV1, History: sessionHistory, Workflow: workflowHistory})
 	if err != nil {
 		t.Fatalf("assemble v1: %v", err)
@@ -108,7 +108,7 @@ func TestReloadedWorkflowDefinitionAffectsSubsequentRun(t *testing.T) {
 	}
 	workflowDefV2, _ := memory.GetWorkflow("test-workflow")
 	viewWfV2 := BuildSessionView(hydrated, agentDef, &workflowDefV2, sessionHistory, workflowHistory)
-	payloadWfV2 := ctxpkg.Builder{MaxMessages: 12}.Build("payload-workflow-v2", ctxpkg.BuildSections(agentDef, viewWfV2), viewWfV2, sessionHistory, workflowHistory)
+	payloadWfV2 := ctxpkg.Builder{MaxMessages: 12}.Build("payload-workflow-v2", ctxpkg.BuildSections(agentDef, viewWfV2, sessionHistory, ctxpkg.RepoContextOptions{}), viewWfV2, sessionHistory, workflowHistory)
 	assembledV2, err := prompt.Assembler{Projections: projections}.Assemble(prompt.Input{Payload: payloadWfV2, Session: viewWfV2, History: sessionHistory, Workflow: workflowHistory})
 	if err != nil {
 		t.Fatalf("assemble v2: %v", err)

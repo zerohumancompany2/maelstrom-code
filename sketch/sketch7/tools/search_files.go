@@ -40,6 +40,7 @@ func (SearchFilesTool) Definition() Definition {
 			"include_glob": "string",
 			"max_results":  "integer",
 		},
+		Required: []string{"pattern"},
 	}
 }
 

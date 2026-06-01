@@ -9,7 +9,7 @@ import (
 func BuildProjectionPlan(agentDef defs.AgentDefinition) ([]Projection, int, error) {
 	for _, projection := range agentDef.Context.Projections {
 		switch projection.Type {
-		case "system", "messages", "cognitive_state", "workflow_state", "binding", "interaction":
+		case "system", "messages", "cognitive_state", "workflow_state", "binding", "interaction", "repo_context":
 		default:
 			return nil, 0, fmt.Errorf("unknown projection type %q", projection.Type)
 		}

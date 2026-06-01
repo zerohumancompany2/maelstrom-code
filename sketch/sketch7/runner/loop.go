@@ -24,7 +24,7 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 	contextBuilder := ctxpkg.Builder{MaxMessages: l.MaxHistory}
 	for iteration := 1; ; iteration++ {
 		view := BuildSessionView(agent, agentDef, workflowDef, sessionHistory, workflowHistory)
-		inferencePayload := contextBuilder.Build(sessionHistory.NextBundleID(), ctxpkg.BuildSections(agentDef, view), view, sessionHistory, workflowHistory)
+		inferencePayload := contextBuilder.Build(sessionHistory.NextBundleID(), ctxpkg.BuildSections(agentDef, view, sessionHistory, ctxpkg.RepoContextOptions{RootDir: ".", RefreshEveryTurns: 12, MaxFilesToInspect: 2000, MaxTopLevelEntries: 8, MaxExtensionsToShow: 5}), view, sessionHistory, workflowHistory)
 		assembled, err := assembler.Assemble(prompt.Input{Payload: inferencePayload})
 		if err != nil {
 			return err
@@ -78,6 +78,7 @@ func toolDefinitions(executor tools.Executor) []provider.ToolDefinition {
 			Name:        def.Name,
 			Description: def.Description,
 			Parameters:  def.Parameters,
+			Required:    append([]string(nil), def.Required...),
 		})
 	}
 	return converted

@@ -23,6 +23,7 @@ func (ListFilesTool) Definition() Definition {
 			"include_glob": "string",
 			"max_results":  "integer",
 		},
+		Required: []string{},
 	}
 }
 

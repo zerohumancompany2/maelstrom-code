@@ -22,6 +22,7 @@ func (ReadSymbolTool) Definition() Definition {
 			"path":   "string",
 			"symbol": "string",
 		},
+		Required: []string{"path", "symbol"},
 	}
 }
 

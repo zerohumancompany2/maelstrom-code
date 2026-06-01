@@ -135,7 +135,7 @@ func (p *OpenAICompatibleProvider) buildHTTPBody(request Request) ([]byte, error
 			Function: openAIFunctionSchema{
 				Name:        tool.Name,
 				Description: tool.Description,
-				Parameters:  toJSONSchema(tool.Parameters),
+				Parameters:  toJSONSchema(tool.Parameters, tool.Required),
 			},
 		})
 	}
@@ -176,17 +176,16 @@ func parseOpenAIResponse(resp openAIChatResponse) (Response, error) {
 	return Response{Outputs: outputs}, nil
 }
 
-func toJSONSchema(parameters map[string]string) map[string]any {
+func toJSONSchema(parameters map[string]string, required []string) map[string]any {
 	props := map[string]any{}
-	required := []string{}
 	for name, typ := range parameters {
 		props[name] = map[string]any{"type": normalizeJSONType(typ)}
-		required = append(required, name)
 	}
+	requiredCopy := append([]string(nil), required...)
 	return map[string]any{
 		"type":       "object",
 		"properties": props,
-		"required":   required,
+		"required":   requiredCopy,
 	}
 }
 

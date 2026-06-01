@@ -22,6 +22,7 @@ func (RunCommandTool) Definition() Definition {
 			"workdir":         "string",
 			"timeout_seconds": "integer",
 		},
+		Required: []string{"command"},
 	}
 }
 

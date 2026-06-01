@@ -21,6 +21,7 @@ func (ReadFileTool) Definition() Definition {
 			"start_line": "integer",
 			"end_line":   "integer",
 		},
+		Required: []string{"path"},
 	}
 }
 

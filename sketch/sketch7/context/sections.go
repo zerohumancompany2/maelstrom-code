@@ -5,10 +5,13 @@ import (
 	"strings"
 
 	"github.com/comalice/inference_sketch/sketch/sketch7/defs"
+	"github.com/comalice/inference_sketch/sketch/sketch7/logs"
 	"github.com/comalice/inference_sketch/sketch/sketch7/runtime"
 )
 
-func BuildSections(agentDef defs.AgentDefinition, session runtime.SessionView) []Section {
+var defaultRepoCache RepoContextCache
+
+func BuildSections(agentDef defs.AgentDefinition, session runtime.SessionView, history *logs.SessionHistory, opts RepoContextOptions) []Section {
 	sections := []Section{}
 	for _, projection := range agentDef.Context.Projections {
 		switch projection.Type {
@@ -29,6 +32,11 @@ func BuildSections(agentDef defs.AgentDefinition, session runtime.SessionView) [
 		case "binding":
 			if session.Binding.Bound {
 				sections = append(sections, Section{Name: "binding", Role: "system", Content: fmt.Sprintf("Active binding: workflow=%s.", session.Binding.WorkflowID), Sticky: true})
+			}
+		case "repo_context":
+			summary := defaultRepoCache.Summary(opts, history)
+			if strings.TrimSpace(summary) != "" {
+				sections = append(sections, Section{Name: "repo_context", Role: "system", Content: summary, Sticky: true})
 			}
 		}
 	}

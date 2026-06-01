@@ -20,6 +20,7 @@ type ToolDefinition struct {
 	Name        string
 	Description string
 	Parameters  map[string]string
+	Required    []string
 }
 
 type Request struct {

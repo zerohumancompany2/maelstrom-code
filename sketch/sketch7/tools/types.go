@@ -13,6 +13,7 @@ type Definition struct {
 	Name        string
 	Description string
 	Parameters  map[string]string
+	Required    []string
 }
 
 type ExecutionRequest struct {

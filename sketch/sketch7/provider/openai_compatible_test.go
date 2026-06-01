@@ -16,7 +16,7 @@ func TestOpenAICompatibleProviderBuildsChatCompletionsBody(t *testing.T) {
 			{Kind: "prompt", Role: "system", Content: "You are a coding agent."},
 			{Kind: "prompt", Role: "user", Content: "Fix the bug."},
 		},
-		Tools: []ToolDefinition{{Name: "read_file", Description: "Read a file", Parameters: map[string]string{"path": "string"}}},
+		Tools: []ToolDefinition{{Name: "read_file", Description: "Read a file", Parameters: map[string]string{"path": "string"}, Required: []string{"path"}}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -31,6 +31,11 @@ func TestOpenAICompatibleProviderBuildsChatCompletionsBody(t *testing.T) {
 	tools, ok := decoded["tools"].([]any)
 	if !ok || len(tools) != 1 {
 		t.Fatalf("tools = %#v, want 1 tool", decoded["tools"])
+	}
+	toolSchema := tools[0].(map[string]any)["function"].(map[string]any)["parameters"].(map[string]any)
+	required, ok := toolSchema["required"].([]any)
+	if !ok || len(required) != 1 || required[0] != "path" {
+		t.Fatalf("required = %#v, want [path]", toolSchema["required"])
 	}
 }
 

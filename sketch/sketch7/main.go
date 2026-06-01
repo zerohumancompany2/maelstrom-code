@@ -170,6 +170,7 @@ func defaultAgentDefinition(modelName string) defs.AgentDefinition {
 			InputBudget: 24000,
 			Projections: []defs.ProjectionDefinition{
 				{Type: "system", Name: "system", Prompt: "You are maelstrom-code, a precise coding agent. Prefer high-signal discovery before editing. Use the narrowest tool that can answer the question. Validate changes after editing."},
+				{Type: "repo_context"},
 				{Type: "interaction"},
 				{Type: "cognitive_state"},
 				{Type: "messages"},
