@@ -1,6 +1,8 @@
 package context
 
 import (
+	"crypto/sha1"
+	"fmt"
 	"strings"
 
 	"github.com/comalice/inference_sketch/sketch/sketch7/logs"
@@ -18,10 +20,16 @@ type Payload struct {
 }
 
 type Section struct {
-	Name    string
-	Role    string
-	Content string
-	Sticky  bool
+	Name              string
+	Role              string
+	Content           string
+	Sticky            bool
+	LogicalKey        string
+	SectionType       string
+	SourceKind        string
+	RefreshEveryTurns int
+	RetentionMode     string
+	RecordID          string
 }
 
 type Message struct {
@@ -224,4 +232,9 @@ func joinList(items []string) string {
 		return "none"
 	}
 	return strings.Join(items, ", ")
+}
+
+func HashContent(content string) string {
+	sum := sha1.Sum([]byte(content))
+	return fmt.Sprintf("%x", sum[:])
 }

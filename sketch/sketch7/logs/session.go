@@ -79,6 +79,31 @@ type ResumeRecord struct {
 	DerivedFromIDs []string
 }
 
+type ContextSnapshotRecord struct {
+	SessionBaseRecord
+	PayloadID          string
+	LogicalKey         string
+	SectionName        string
+	SectionType        string
+	SourceKind         string
+	Content            string
+	ContentHash        string
+	GeneratedAtTurn    int
+	RefreshEveryNTurns int
+	RetentionMode      string
+	SupersedesRecordID string
+}
+
+type InferenceEnvelopeRecord struct {
+	SessionBaseRecord
+	PayloadID                string
+	ModelRef                 string
+	ProviderRef              string
+	IncludedContextRecordIDs []string
+	IncludedTranscriptKinds  []string
+	IncludedToolNames        []string
+}
+
 type SessionHistory struct {
 	SessionID string
 	Records   []SessionRecord

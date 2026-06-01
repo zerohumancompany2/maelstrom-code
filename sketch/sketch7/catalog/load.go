@@ -70,10 +70,12 @@ type agentContextDocument struct {
 }
 
 type projectionDocument struct {
-	Type   string `yaml:"type"`
-	Prompt string `yaml:"prompt"`
-	Name   string `yaml:"name"`
-	Chart  string `yaml:"chart"`
+	Type               string `yaml:"type"`
+	Prompt             string `yaml:"prompt"`
+	Name               string `yaml:"name"`
+	Chart              string `yaml:"chart"`
+	RefreshEveryNTurns *int   `yaml:"refreshEveryNTurns"`
+	RetentionMode      string `yaml:"retentionMode"`
 }
 
 type workflowDocument struct {
@@ -179,6 +181,10 @@ func LoadAgent(raw []byte) (defs.AgentDefinition, error) {
 	if len(projections) == 0 {
 		projections = doc.Context.Chunks
 	}
+	converted, err := toProjectionDefinitions(projections)
+	if err != nil {
+		return defs.AgentDefinition{}, err
+	}
 	return defs.AgentDefinition{
 		Name:        strings.TrimSpace(doc.Name),
 		Description: strings.TrimSpace(doc.Description),
@@ -191,7 +197,7 @@ func LoadAgent(raw []byte) (defs.AgentDefinition, error) {
 		Tools: append([]string(nil), doc.Tools...),
 		Context: defs.ContextDefinition{
 			InputBudget: doc.Context.InputBudget,
-			Projections: toProjectionDefinitions(projections),
+			Projections: converted,
 		},
 		Cognitive: toStatechartDefinition(doc.Cognitive),
 	}, nil
@@ -221,17 +227,54 @@ func decodeHeader(raw []byte) (documentHeader, error) {
 	return header, nil
 }
 
-func toProjectionDefinitions(items []projectionDocument) []defs.ProjectionDefinition {
+func toProjectionDefinitions(items []projectionDocument) ([]defs.ProjectionDefinition, error) {
 	result := make([]defs.ProjectionDefinition, 0, len(items))
 	for _, item := range items {
-		result = append(result, defs.ProjectionDefinition{
-			Type:   strings.TrimSpace(item.Type),
-			Prompt: item.Prompt,
-			Name:   strings.TrimSpace(item.Name),
-			Chart:  strings.TrimSpace(item.Chart),
-		})
+		def := defs.ProjectionDefinition{
+			Type:               strings.TrimSpace(item.Type),
+			Prompt:             item.Prompt,
+			Name:               strings.TrimSpace(item.Name),
+			Chart:              strings.TrimSpace(item.Chart),
+			RefreshEveryNTurns: item.RefreshEveryNTurns,
+			RetentionMode:      strings.TrimSpace(item.RetentionMode),
+		}
+		if err := validateProjectionDefinition(def); err != nil {
+			return nil, err
+		}
+		result = append(result, def)
 	}
-	return result
+	return result, nil
+}
+
+func validateProjectionDefinition(def defs.ProjectionDefinition) error {
+	switch def.Type {
+	case "system":
+		if def.RefreshEveryNTurns != nil {
+			return fmt.Errorf("projection type %q does not support refreshEveryNTurns", def.Type)
+		}
+		if def.RetentionMode != "" {
+			return fmt.Errorf("projection type %q does not support retentionMode", def.Type)
+		}
+	case "repo_context":
+		if def.RetentionMode != "" && def.RetentionMode != "latest_effective" {
+			return fmt.Errorf("projection type %q only supports retentionMode=latest_effective", def.Type)
+		}
+	case "messages":
+		if def.RefreshEveryNTurns != nil {
+			return fmt.Errorf("projection type %q does not support refreshEveryNTurns", def.Type)
+		}
+		if def.RetentionMode != "" && def.RetentionMode != "coherent_tail" {
+			return fmt.Errorf("projection type %q only supports retentionMode=coherent_tail", def.Type)
+		}
+	case "interaction", "cognitive_state", "workflow_state", "binding":
+		if def.RefreshEveryNTurns != nil {
+			return fmt.Errorf("projection type %q does not support refreshEveryNTurns", def.Type)
+		}
+		if def.RetentionMode != "" {
+			return fmt.Errorf("projection type %q does not support retentionMode", def.Type)
+		}
+	}
+	return nil
 }
 
 func toStatechartDefinition(doc statechartDocument) defs.StatechartDefinition {

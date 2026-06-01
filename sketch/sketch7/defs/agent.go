@@ -22,8 +22,10 @@ type ContextDefinition struct {
 }
 
 type ProjectionDefinition struct {
-	Type   string
-	Prompt string
-	Name   string
-	Chart  string
+	Type               string
+	Prompt             string
+	Name               string
+	Chart              string
+	RefreshEveryNTurns *int
+	RetentionMode      string
 }

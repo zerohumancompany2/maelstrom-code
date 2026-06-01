@@ -44,6 +44,34 @@ func TestLoadAgentFallsBackToChunksShape(t *testing.T) {
 	}
 }
 
+func TestLoadAgentParsesProjectionPolicyFields(t *testing.T) {
+	raw := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: policy-agent\nmodel: glm-4.5-air\ncontext:\n  inputBudget: 1000\n  projections:\n    - type: repo_context\n      refreshEveryNTurns: 12\n      retentionMode: latest_effective\n    - type: messages\n      retentionMode: coherent_tail\ncognitive:\n  initialState: observe\n  states: []\n  transitions: []\n")
+	def, err := LoadAgent(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(def.Context.Projections) != 2 {
+		t.Fatalf("got %d projections, want 2", len(def.Context.Projections))
+	}
+	if def.Context.Projections[0].RefreshEveryNTurns == nil || *def.Context.Projections[0].RefreshEveryNTurns != 12 {
+		t.Fatalf("RefreshEveryNTurns = %#v, want 12", def.Context.Projections[0].RefreshEveryNTurns)
+	}
+	if def.Context.Projections[0].RetentionMode != "latest_effective" {
+		t.Fatalf("RetentionMode = %q, want latest_effective", def.Context.Projections[0].RetentionMode)
+	}
+	if def.Context.Projections[1].RetentionMode != "coherent_tail" {
+		t.Fatalf("messages RetentionMode = %q, want coherent_tail", def.Context.Projections[1].RetentionMode)
+	}
+}
+
+func TestLoadAgentRejectsInvalidProjectionPolicyFields(t *testing.T) {
+	raw := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: invalid-agent\nmodel: glm-4.5-air\ncontext:\n  inputBudget: 1000\n  projections:\n    - type: system\n      prompt: hi\n      retentionMode: latest_effective\ncognitive:\n  initialState: observe\n  states: []\n  transitions: []\n")
+	_, err := LoadAgent(raw)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
 func TestLoadWorkflowParsesDefinition(t *testing.T) {
 	raw := []byte("apiVersion: maelstrom/v1\nkind: Workflow\nname: conversation-to-execution\ndescription: Chat through implementation\ncontext: Build carefully.\nstatechart:\n  initialState: chatting\n  states:\n    - name: chatting\n    - name: planning\n  transitions:\n    - trigger: commit_plan\n      from: chatting\n      to: planning\n")
 	def, err := LoadWorkflow(raw)

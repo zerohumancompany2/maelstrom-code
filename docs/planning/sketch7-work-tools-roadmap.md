@@ -219,6 +219,34 @@ It is a note to future selves so the MVP does not calcify into unnecessary bespo
 - `read_symbol` / `get_function`
 - `replace_in_range`
 
+## Note: work tools and context maps interact
+
+Recent sketch7 experiments showed that context-map sections can materially improve first-step tool choice and repo orientation before any work tool is called.
+
+This suggests an important planning point:
+
+- tool evolution should not be considered in isolation,
+- because some performance improvements will come from better tool contracts,
+- while others will come from better context-map sections that help the model choose the right tools earlier.
+
+Examples of useful future coding-oriented context sections/chunks may include:
+
+- repo awareness,
+- task/acceptance-criteria summaries,
+- risk or policy nudges,
+- changed-file summaries,
+- and lightweight test/build environment summaries.
+
+These should be treated carefully because they are effectively arbitrary inference payload injections.
+Longer-term they should be backed by durable context snapshot records and explicit inference-envelope recording so their effect on behavior remains inspectable and auditable.
+
+For now, the intended authored policy surface for these sections should stay small:
+
+- `refreshEveryNTurns` for generated-section refresh cadence,
+- `retentionMode` for latest-effective or transcript-retention behavior.
+
+That should be enough to support useful context-map evolution without rebuilding a large chunk-policy DSL prematurely.
+
 #### Design note: `search_files` backend layering
 
 `search_files` should remain its own tool contract rather than becoming an alias for `run_command`.

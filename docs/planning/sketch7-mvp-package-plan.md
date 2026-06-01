@@ -172,6 +172,24 @@ We need to know:
 - which projection produced which text,
 - and what runtime view was assembled when the provider was called.
 
+This should now be extended to explicit context-map sections as well.
+
+Once arbitrary context sections can influence inference, they should not be treated as invisible implementation detail forever.
+We will eventually want a durable record of:
+
+- which context sections existed,
+- which ones were included in a given inference payload,
+- what content or content-hash they carried,
+- where they came from,
+- and which final inference envelope was actually sent across the wire.
+
+This matters for:
+
+- debugging,
+- replay and recovery,
+- trust,
+- and auditing hidden behavior steering.
+
 ### 8. Chat is part of the MVP entrypoint
 
 Chat is not a bonus layer on top of the runtime.
@@ -541,6 +559,119 @@ If later we want a more general declarative projection language, that can come a
 - provenance concept
 - assembler pattern
 - payload source-record collection logic
+
+### `context/`
+
+This package should own the explicit inference-shaping layer between runtime state/history and provider serialization.
+
+Its near-term responsibilities now include:
+
+- deriving ordered context sections from agent/workflow/session state,
+- deriving prompt-visible transcript messages from session history,
+- applying trimming/retention policy over prompt-visible transcript blocks,
+- and producing a typed inference payload that downstream prompt/provider code can serialize.
+
+Near-term context section examples include:
+
+- system instructions,
+- interaction/cognitive/workflow/binding sections,
+- repo-awareness sections,
+- and later other environment/task/memory sections.
+
+This is the minimal reintroduction of the old context-map idea, but with much tighter scope.
+It should not grow back into a large speculative abstraction tower.
+
+Near-term, the authored context definition should stay narrow.
+The likely next extension is to allow at most two additional optional per-section fields:
+
+- `refreshEveryNTurns`
+- `retentionMode`
+
+If either field is absent, it should be ignored.
+
+That keeps the authored context shape focused on:
+
+- section ordering,
+- refresh cadence for generated sections,
+- and retention/selection policy for transcript or generated-section history.
+
+We should avoid reintroducing a wide chunk-policy DSL too early.
+
+#### Stronger version later: durable context snapshots and inference envelopes
+
+The current sketch7 `context/` package builds sections and transcript messages ephemerally at inference time.
+That is enough for the current MVP loop, but it is not the end state.
+
+Longer-term we likely want at least two additional durable record types in session history:
+
+1. **context snapshot records**
+   - represent a generated context section/chunk,
+   - include section name/type,
+   - source kind (static, derived_repo, derived_workflow, derived_memory, etc.),
+   - content and/or content hash,
+   - freshness/turn metadata,
+   - and whether this is a new version or a refresh of an existing logical section.
+
+2. **inference payload / envelope records**
+   - represent the actual bundle sent to inference,
+   - include payload ID,
+   - included context snapshot refs,
+   - included transcript/message refs,
+   - tool schema refs or hashes,
+   - model/provider ref,
+   - and enough ordering/provenance to answer “what did the model actually see?”
+
+This stronger version matters because arbitrary context sections are powerful but can also create hidden behavior steering.
+If context sections are not durably recorded, later debugging and audit become much weaker.
+
+#### Stronger version later: refreshed context sections and latest-effective semantics
+
+One subtle design problem is how refreshed context sections should “find their way back” into session history without polluting transcript replay.
+
+Example:
+
+- repo-awareness section generated at turn 12,
+- more conversation and tool turns happen,
+- repo-awareness section refreshed again at turn 24,
+- inference bundle at turn 25 should likely include only the latest effective repo-awareness section,
+- while still preserving durable evidence that both versions existed.
+
+The likely direction is:
+
+- keep context snapshot records as first-class non-chat session records,
+- treat them as their own history stream inside session history,
+- and when building inference payloads, select the **latest effective snapshot** per logical section key unless a more specific policy says otherwise.
+
+The likely authored representation for that policy is intentionally narrow:
+
+- `refreshEveryNTurns` to control when a generated section should be refreshed,
+- `retentionMode` to control how multiple historical snapshots or transcript items should be selected.
+
+Examples:
+
+- `repo_context` might use `refreshEveryNTurns: 12` and `retentionMode: latest_effective`
+- `messages` might use `retentionMode: coherent_tail`
+
+This implies a distinction between:
+
+- **conversation history** — user/assistant/tool transcript,
+- **context history** — generated context sections/chunks and their refreshes,
+- **inference history** — exact envelopes sent to the model.
+
+That separation is desirable.
+It lets us avoid polluting the user/assistant transcript with fake system chatter while still making context injections durable and inspectable.
+
+The likely selection rule is:
+
+- keep durable append-only context snapshot history,
+- define a logical section key (for example `repo_context`),
+- allow multiple snapshots over time for that key,
+- and at payload build time pick the latest effective snapshot for the current turn unless the section policy requires multiple versions.
+
+The order of sections in the authored context definition should define payload order.
+We should not introduce a separate `sticky` field unless we discover a real need for section-priority semantics beyond ordering plus retention mode.
+
+This does add some complexity to context sections/chunks, but it is likely the right complexity rather than accidental prompt magic.
 
 ### `provider/`
 

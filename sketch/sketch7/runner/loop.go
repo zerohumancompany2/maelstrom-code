@@ -24,7 +24,9 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 	contextBuilder := ctxpkg.Builder{MaxMessages: l.MaxHistory}
 	for iteration := 1; ; iteration++ {
 		view := BuildSessionView(agent, agentDef, workflowDef, sessionHistory, workflowHistory)
-		inferencePayload := contextBuilder.Build(sessionHistory.NextBundleID(), ctxpkg.BuildSections(agentDef, view, sessionHistory, ctxpkg.RepoContextOptions{RootDir: ".", RefreshEveryTurns: 12, MaxFilesToInspect: 2000, MaxTopLevelEntries: 8, MaxExtensionsToShow: 5}), view, sessionHistory, workflowHistory)
+		payloadID := sessionHistory.NextBundleID()
+		inferencePayload := contextBuilder.Build(payloadID, ctxpkg.BuildSections(agentDef, view, sessionHistory, ctxpkg.RepoContextOptions{RootDir: ".", RefreshEveryTurns: 12, MaxFilesToInspect: 2000, MaxTopLevelEntries: 8, MaxExtensionsToShow: 5}), view, sessionHistory, workflowHistory)
+		persistContextSnapshots(sessionHistory, inferencePayload)
 		assembled, err := assembler.Assemble(prompt.Input{Payload: inferencePayload})
 		if err != nil {
 			return err
@@ -35,6 +37,7 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 		if err != nil {
 			return err
 		}
+		sessionHistory.Append(logs.InferenceEnvelopeRecord{SessionBaseRecord: sessionHistory.NextRecord("inference_envelope"), PayloadID: inferencePayload.PayloadID, ModelRef: inferencePayload.ModelRef, ProviderRef: agent.ProviderName, IncludedContextRecordIDs: contextRecordIDs(inferencePayload.Sections), IncludedTranscriptKinds: messageKinds(inferencePayload.Messages), IncludedToolNames: inferencePayload.Tools})
 		response, err := l.Provider.Send(request)
 		if err != nil {
 			return err
@@ -64,6 +67,55 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 			return fmt.Errorf("loop guard tripped")
 		}
 	}
+}
+
+func persistContextSnapshots(history *logs.SessionHistory, payload ctxpkg.Payload) {
+	turn := ctxpkg.InteractionTurnCount(history)
+	for i, section := range payload.Sections {
+		if section.LogicalKey == "" || section.SourceKind == "static" {
+			continue
+		}
+		latest := latestContextSnapshotRecord(history, section.LogicalKey)
+		if latest != nil && latest.ContentHash == ctxpkg.HashContent(section.Content) {
+			payload.Sections[i].RecordID = latest.RecordID()
+			continue
+		}
+		record := logs.ContextSnapshotRecord{SessionBaseRecord: history.NextRecord("context_snapshot"), PayloadID: payload.PayloadID, LogicalKey: section.LogicalKey, SectionName: section.Name, SectionType: section.SectionType, SourceKind: section.SourceKind, Content: section.Content, ContentHash: ctxpkg.HashContent(section.Content), GeneratedAtTurn: turn, RefreshEveryNTurns: section.RefreshEveryTurns, RetentionMode: section.RetentionMode}
+		if latest != nil {
+			record.SupersedesRecordID = latest.RecordID()
+		}
+		history.Append(record)
+		payload.Sections[i].RecordID = record.RecordID()
+	}
+}
+
+func latestContextSnapshotRecord(history *logs.SessionHistory, logicalKey string) *logs.ContextSnapshotRecord {
+	for i := len(history.Records) - 1; i >= 0; i-- {
+		rec, ok := history.Records[i].(logs.ContextSnapshotRecord)
+		if ok && rec.LogicalKey == logicalKey {
+			copy := rec
+			return &copy
+		}
+	}
+	return nil
+}
+
+func contextRecordIDs(sections []ctxpkg.Section) []string {
+	ids := []string{}
+	for _, section := range sections {
+		if section.RecordID != "" {
+			ids = append(ids, section.RecordID)
+		}
+	}
+	return ids
+}
+
+func messageKinds(messages []ctxpkg.Message) []string {
+	kinds := make([]string, 0, len(messages))
+	for _, message := range messages {
+		kinds = append(kinds, message.Kind)
+	}
+	return kinds
 }
 
 func toolDefinitions(executor tools.Executor) []provider.ToolDefinition {

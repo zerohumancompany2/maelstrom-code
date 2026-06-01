@@ -139,6 +139,22 @@ func TestLoopRunStopsWhenProviderReturnsOnlyAssistantOutput(t *testing.T) {
 	if !foundAssistant {
 		t.Fatalf("expected assistant message in session history, got %#v", sessionHistory.Records)
 	}
+	foundEnvelope := false
+	foundContextSnapshot := false
+	for _, record := range sessionHistory.Records {
+		switch record.(type) {
+		case logs.InferenceEnvelopeRecord:
+			foundEnvelope = true
+		case logs.ContextSnapshotRecord:
+			foundContextSnapshot = true
+		}
+	}
+	if !foundEnvelope {
+		t.Fatalf("expected inference envelope record, got %#v", sessionHistory.Records)
+	}
+	if foundContextSnapshot {
+		return
+	}
 }
 
 func TestLoopRunProcessesWorkflowTransitionWhenBound(t *testing.T) {

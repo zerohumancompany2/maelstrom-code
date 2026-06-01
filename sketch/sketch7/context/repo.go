@@ -27,7 +27,17 @@ type RepoContextCache struct {
 }
 
 func (c *RepoContextCache) Summary(opts RepoContextOptions, history *logs.SessionHistory) string {
-	turn := interactionTurnCount(history)
+	if latest := latestContextSnapshot(history, "repo_context"); latest != nil {
+		refreshEvery := opts.RefreshEveryTurns
+		if refreshEvery <= 0 {
+			refreshEvery = 12
+		}
+		turn := InteractionTurnCount(history)
+		if turn-latest.GeneratedAtTurn < refreshEvery {
+			return latest.Content
+		}
+	}
+	turn := InteractionTurnCount(history)
 	refreshEvery := opts.RefreshEveryTurns
 	if refreshEvery <= 0 {
 		refreshEvery = 12
@@ -41,6 +51,20 @@ func (c *RepoContextCache) Summary(opts RepoContextOptions, history *logs.Sessio
 	c.lastTurn = turn
 	c.lastText = summary
 	return summary
+}
+
+func latestContextSnapshot(history *logs.SessionHistory, logicalKey string) *logs.ContextSnapshotRecord {
+	if history == nil {
+		return nil
+	}
+	for i := len(history.Records) - 1; i >= 0; i-- {
+		rec, ok := history.Records[i].(logs.ContextSnapshotRecord)
+		if ok && rec.LogicalKey == logicalKey {
+			copy := rec
+			return &copy
+		}
+	}
+	return nil
 }
 
 func buildRepoSummary(opts RepoContextOptions) string {
@@ -80,7 +104,7 @@ func buildRepoSummary(opts RepoContextOptions) string {
 	return strings.Join(parts, "\n")
 }
 
-func interactionTurnCount(history *logs.SessionHistory) int {
+func InteractionTurnCount(history *logs.SessionHistory) int {
 	if history == nil {
 		return 0
 	}
