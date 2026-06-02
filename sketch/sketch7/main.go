@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/comalice/inference_sketch/sketch/sketch7/catalog"
@@ -24,7 +25,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: go run ./sketch/sketch7 [--model <model.yaml>] [--agent <agent.yaml>] [--workflow <workflow.yaml>] --prompt <text>")
+		return fmt.Errorf("usage: go run ./sketch/sketch7 [--model <model.yaml>] [--agent <agent.yaml>] [--workflow <workflow.yaml>] [--session-id <id> | --state <path>] [--stop-token <token>] --prompt <text>")
 	}
 	args, err := parseArgs(os.Args[1:])
 	if err != nil {
@@ -68,16 +69,46 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	sessionHistory := logs.NewSessionHistory("session-001")
-	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: args.prompt})
+	statePath := strings.TrimSpace(args.statePath)
+	if statePath == "" && strings.TrimSpace(args.sessionID) != "" {
+		statePath = filepath.Join(".maelstrom", "sessions", args.sessionID+".json")
+	}
+	var sessionHistory *logs.SessionHistory
+	var workflowHistory *logs.WorkflowHistory
+	if statePath != "" {
+		if _, err := os.Stat(statePath); err == nil {
+			loadedSession, loadedWorkflow, err := logs.LoadState(statePath)
+			if err != nil {
+				return err
+			}
+			sessionHistory = loadedSession
+			workflowHistory = loadedWorkflow
+		}
+	}
+	if sessionHistory == nil {
+		sessionID := strings.TrimSpace(args.sessionID)
+		if sessionID == "" {
+			sessionID = "session-001"
+		}
+		sessionHistory = logs.NewSessionHistory(sessionID)
+	}
+	if strings.TrimSpace(args.prompt) != "" {
+		sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: args.prompt})
+	}
 	loop := runner.Loop{
 		Provider:    providerAdapter,
 		Tools:       toolRegistry,
 		Projections: projections,
 		MaxHistory:  maxHistory,
+		StopToken:   args.stopToken,
 	}
-	if err := loop.Run(hydratedAgent, agentDef, nil, sessionHistory, nil); err != nil {
+	if err := loop.Run(hydratedAgent, agentDef, nil, sessionHistory, workflowHistory); err != nil {
 		return err
+	}
+	if statePath != "" {
+		if err := logs.SaveState(statePath, sessionHistory, workflowHistory); err != nil {
+			return err
+		}
 	}
 	for _, record := range sessionHistory.Records {
 		fmt.Println(describeRecord(record))
@@ -90,6 +121,9 @@ type cliArgs struct {
 	agentPath    string
 	workflowPath string
 	prompt       string
+	sessionID    string
+	statePath    string
+	stopToken    string
 }
 
 func parseArgs(args []string) (cliArgs, error) {
@@ -120,12 +154,30 @@ func parseArgs(args []string) (cliArgs, error) {
 				return cliArgs{}, fmt.Errorf("missing value for --prompt")
 			}
 			parsed.prompt = args[i]
+		case "--session-id":
+			i++
+			if i >= len(args) {
+				return cliArgs{}, fmt.Errorf("missing value for --session-id")
+			}
+			parsed.sessionID = args[i]
+		case "--state":
+			i++
+			if i >= len(args) {
+				return cliArgs{}, fmt.Errorf("missing value for --state")
+			}
+			parsed.statePath = args[i]
+		case "--stop-token":
+			i++
+			if i >= len(args) {
+				return cliArgs{}, fmt.Errorf("missing value for --stop-token")
+			}
+			parsed.stopToken = args[i]
 		default:
 			return cliArgs{}, fmt.Errorf("unknown argument %q", args[i])
 		}
 	}
-	if parsed.prompt == "" {
-		return cliArgs{}, fmt.Errorf("--prompt is required")
+	if parsed.prompt == "" && parsed.statePath == "" && parsed.sessionID == "" {
+		return cliArgs{}, fmt.Errorf("--prompt is required unless resuming with --state or --session-id")
 	}
 	return parsed, nil
 }
@@ -232,22 +284,44 @@ func describeRecord(record logs.SessionRecord) string {
 	switch v := record.(type) {
 	case logs.UserMessageRecord:
 		return fmt.Sprintf("user: %s", v.Content)
+	case *logs.UserMessageRecord:
+		return fmt.Sprintf("user: %s", v.Content)
 	case logs.AssistantMessageRecord:
+		return fmt.Sprintf("assistant: %s", v.Content)
+	case *logs.AssistantMessageRecord:
 		return fmt.Sprintf("assistant: %s", v.Content)
 	case logs.ToolCallRequestRecord:
 		return fmt.Sprintf("tool request: %s %s", v.ToolName, v.Arguments)
+	case *logs.ToolCallRequestRecord:
+		return fmt.Sprintf("tool request: %s %s", v.ToolName, v.Arguments)
 	case logs.ToolCallResultRecord:
+		return fmt.Sprintf("tool result: %s\n%s", v.ToolName, v.Content)
+	case *logs.ToolCallResultRecord:
 		return fmt.Sprintf("tool result: %s\n%s", v.ToolName, v.Content)
 	case logs.CognitiveTransitionRecord:
 		return fmt.Sprintf("cognitive transition: %s -> %s via %s", v.FromState, v.ToState, v.Trigger)
+	case *logs.CognitiveTransitionRecord:
+		return fmt.Sprintf("cognitive transition: %s -> %s via %s", v.FromState, v.ToState, v.Trigger)
 	case logs.SessionWorkflowBindingRecord:
+		return fmt.Sprintf("binding: %s %s", v.Action, v.WorkflowID)
+	case *logs.SessionWorkflowBindingRecord:
 		return fmt.Sprintf("binding: %s %s", v.Action, v.WorkflowID)
 	case logs.WorkflowTransitionRefRecord:
 		return fmt.Sprintf("workflow transition: %s -> %s via %s", v.FromState, v.ToState, v.Trigger)
+	case *logs.WorkflowTransitionRefRecord:
+		return fmt.Sprintf("workflow transition: %s -> %s via %s", v.FromState, v.ToState, v.Trigger)
 	case logs.InterruptRecord:
+		return fmt.Sprintf("interrupt: %s", v.Reason)
+	case *logs.InterruptRecord:
 		return fmt.Sprintf("interrupt: %s", v.Reason)
 	case logs.ResumeRecord:
 		return fmt.Sprintf("resume: %s", v.Reason)
+	case *logs.ResumeRecord:
+		return fmt.Sprintf("resume: %s", v.Reason)
+	case logs.ContextSnapshotRecord, *logs.ContextSnapshotRecord:
+		return "context snapshot"
+	case logs.InferenceEnvelopeRecord, *logs.InferenceEnvelopeRecord:
+		return "inference envelope"
 	default:
 		return fmt.Sprintf("record: %T", record)
 	}

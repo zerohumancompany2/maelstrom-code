@@ -460,3 +460,51 @@ The next coding milestone for sketch7 should be:
 
 If that works, the architecture is earning its keep.
 If it does not, the next round of work should improve tools before adding more runtime sophistication.
+
+## Current checkpoint update (2026-06-01)
+
+This milestone has effectively been achieved and then surpassed in a limited but meaningful way.
+
+Sketch7 now has working and pressure-tested support for:
+
+- `read_file`
+- `replace_text`
+- `run_command`
+- `get_file_skeleton`
+- `search_files`
+- `list_files`
+- `read_symbol`
+- `find_references`
+
+And importantly, these were not just unit-tested in isolation.
+They were exercised through a real local-model loop, which drove several critical improvements:
+
+- better `search_files` ranking,
+- better provider replay shape,
+- introduction of `list_files`,
+- explicit inference context shaping,
+- repo-awareness sections that reduced wrong-language starts,
+- and early durable context/inference envelope work.
+
+This changes the planning posture.
+The next risk is no longer primarily "insufficient tool surface."
+The next risk is:
+
+> building a good tool-using coding loop without yet proving the larger workflow-backed product story.
+
+### Updated implication for tool work
+
+Near-term tool work should now be justified mainly by one of four pressures:
+
+1. it improves the anchor `conversation_to_execution` workflow,
+2. it improves interruption/resumption or recovery behavior,
+3. it improves inference context fidelity or explainability,
+4. or it is clearly required by benchmark/task pressure.
+
+That means sketch7 should now bias toward:
+
+- fewer, more targeted tool additions,
+- stronger integration scenarios,
+- and clearer runtime/product behavior,
+
+rather than broadening the tool surface quickly.

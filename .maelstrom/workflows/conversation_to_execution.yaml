@@ -1,0 +1,271 @@
+apiVersion: maelstrom/v1alpha1
+kind: Workflow
+name: conversation_to_execution
+description: >
+  Anchor workflow for taking a user conversation from requirements gathering
+  through repo orientation, planning, review, implementation, and validation.
+context: >
+  Use this workflow when a chat session is turning into concrete repo work.
+  Move deliberately from user requirements to repo evidence to a reviewable plan
+  before implementation. Support interruption and redirection without losing the
+  current work state.
+statechart:
+  initialState: requirements_collection
+  states:
+    - name: requirements_collection
+      description: Gather requirements, constraints, success criteria, and open questions from the user.
+      visibleTools:
+        - bind_workflow
+        - interrupt_session
+        - resume_session
+      enabledTools:
+        - bind_workflow
+        - interrupt_session
+        - resume_session
+      prompt: >
+        Collect the task requirements from the user. Clarify goals, constraints,
+        acceptance criteria, and any ambiguity before moving into repo-oriented work.
+      allowedTriggers:
+        - clarify_requirement
+        - begin_repo_orientation
+        - block
+
+    - name: repo_orientation
+      description: Inspect the repository to identify relevant files, symbols, modules, and constraints.
+      visibleTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+        - interrupt_session
+      enabledTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+        - interrupt_session
+      prompt: >
+        Orient in the repository. Identify the files, symbols, and existing behavior
+        relevant to the user's request. Gather enough evidence to produce a concrete plan.
+      allowedTriggers:
+        - gather_more_context
+        - draft_plan
+        - return_to_requirements
+        - block
+
+    - name: planning
+      description: Convert requirements and repo evidence into a concrete implementation plan.
+      visibleTools:
+        - read_file
+        - search_files
+        - list_files
+        - interrupt_session
+      enabledTools:
+        - read_file
+        - search_files
+        - list_files
+        - interrupt_session
+      prompt: >
+        Produce a concrete implementation plan grounded in the user's requirements
+        and repository evidence. Call out intended edits, validation steps, and risks.
+      allowedTriggers:
+        - revise_plan
+        - submit_plan_for_review
+        - return_to_repo_orientation
+        - return_to_requirements
+        - block
+
+    - name: plan_review
+      description: Present the plan for approval or correction before implementation.
+      visibleTools:
+        - interrupt_session
+        - resume_session
+      enabledTools:
+        - interrupt_session
+        - resume_session
+      prompt: >
+        Present the plan clearly for user review. Wait for approval, correction,
+        or redirection before starting implementation.
+      allowedTriggers:
+        - approve_plan
+        - revise_plan
+        - return_to_requirements
+        - block
+
+    - name: implementation
+      description: Execute the approved plan through targeted repo changes.
+      visibleTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+        - replace_text
+        - run_command
+        - interrupt_session
+      enabledTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+        - replace_text
+        - run_command
+        - interrupt_session
+      prompt: >
+        Implement the approved plan with narrow, auditable changes. Use the repo
+        tools to inspect precisely, edit safely, and prepare for validation.
+      allowedTriggers:
+        - continue_implementation
+        - begin_validation
+        - return_to_planning
+        - block
+
+    - name: validation
+      description: Validate the implementation through tests, builds, or other explicit checks.
+      visibleTools:
+        - read_file
+        - run_command
+        - search_files
+        - interrupt_session
+      enabledTools:
+        - read_file
+        - run_command
+        - search_files
+        - interrupt_session
+      prompt: >
+        Validate the implementation using explicit checks. If validation fails,
+        determine whether to return to implementation or planning.
+      allowedTriggers:
+        - fix_implementation
+        - complete
+        - return_to_planning
+        - block
+
+    - name: done
+      description: The task is complete and validated.
+      visibleTools: []
+      enabledTools: []
+      prompt: Task completed successfully.
+      allowedTriggers: []
+
+    - name: blocked
+      description: The task cannot proceed without outside input or a changed constraint.
+      visibleTools:
+        - interrupt_session
+        - resume_session
+      enabledTools:
+        - interrupt_session
+        - resume_session
+      prompt: >
+        The workflow is blocked. Clearly state the reason and what input or change
+        is required to continue.
+      allowedTriggers:
+        - resume
+
+  transitions:
+    - trigger: clarify_requirement
+      from: requirements_collection
+      to: requirements_collection
+
+    - trigger: begin_repo_orientation
+      from: requirements_collection
+      to: repo_orientation
+
+    - trigger: gather_more_context
+      from: repo_orientation
+      to: repo_orientation
+
+    - trigger: return_to_requirements
+      from: repo_orientation
+      to: requirements_collection
+
+    - trigger: draft_plan
+      from: repo_orientation
+      to: planning
+
+    - trigger: revise_plan
+      from: planning
+      to: planning
+
+    - trigger: return_to_repo_orientation
+      from: planning
+      to: repo_orientation
+
+    - trigger: return_to_requirements
+      from: planning
+      to: requirements_collection
+
+    - trigger: submit_plan_for_review
+      from: planning
+      to: plan_review
+
+    - trigger: revise_plan
+      from: plan_review
+      to: planning
+
+    - trigger: return_to_requirements
+      from: plan_review
+      to: requirements_collection
+
+    - trigger: approve_plan
+      from: plan_review
+      to: implementation
+
+    - trigger: continue_implementation
+      from: implementation
+      to: implementation
+
+    - trigger: return_to_planning
+      from: implementation
+      to: planning
+
+    - trigger: begin_validation
+      from: implementation
+      to: validation
+
+    - trigger: fix_implementation
+      from: validation
+      to: implementation
+
+    - trigger: return_to_planning
+      from: validation
+      to: planning
+
+    - trigger: complete
+      from: validation
+      to: done
+
+    - trigger: block
+      from: requirements_collection
+      to: blocked
+
+    - trigger: block
+      from: repo_orientation
+      to: blocked
+
+    - trigger: block
+      from: planning
+      to: blocked
+
+    - trigger: block
+      from: plan_review
+      to: blocked
+
+    - trigger: block
+      from: implementation
+      to: blocked
+
+    - trigger: block
+      from: validation
+      to: blocked
+
+    - trigger: resume
+      from: blocked
+      to: requirements_collection

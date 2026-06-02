@@ -2,6 +2,7 @@ package runner
 
 import (
 	"fmt"
+	"strings"
 
 	ctxpkg "github.com/comalice/inference_sketch/sketch/sketch7/context"
 	"github.com/comalice/inference_sketch/sketch/sketch7/defs"
@@ -17,6 +18,7 @@ type Loop struct {
 	Tools       tools.Executor
 	Projections []prompt.Projection
 	MaxHistory  int
+	StopToken   string
 }
 
 func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDef *defs.WorkflowDefinition, sessionHistory *logs.SessionHistory, workflowHistory *logs.WorkflowHistory) error {
@@ -60,6 +62,9 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 			}
 		}
 
+		if l.shouldStop(sessionHistory) {
+			return nil
+		}
 		if !hasToolCalls {
 			return nil
 		}
@@ -67,6 +72,17 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 			return fmt.Errorf("loop guard tripped")
 		}
 	}
+}
+
+func (l Loop) shouldStop(history *logs.SessionHistory) bool {
+	if history == nil || strings.TrimSpace(l.StopToken) == "" || len(history.Records) == 0 {
+		return false
+	}
+	last, ok := history.Records[len(history.Records)-1].(logs.AssistantMessageRecord)
+	if !ok {
+		return false
+	}
+	return strings.Contains(last.Content, l.StopToken)
 }
 
 func persistContextSnapshots(history *logs.SessionHistory, payload ctxpkg.Payload) {

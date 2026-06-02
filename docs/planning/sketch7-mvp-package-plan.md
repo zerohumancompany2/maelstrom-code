@@ -823,6 +823,66 @@ If the system does not make the repo-edit/test/debug loop excellent, the archite
 
 ## MVP milestones
 
+## Updated next priorities (2026-06-01)
+
+The original planning sequence focused first on making the runtime/tool loop real.
+That phase has now succeeded enough that the priorities should shift.
+
+### Priority 1: prove the anchor product path, not just the tool loop
+
+The next major sketch7 milestone should be:
+
+> prove one convincing end-to-end `conversation_to_execution` flow that exercises chat, workflow-backed execution, interruption/resumption, and recovery semantics together.
+
+This should be driven by an explicit scenario rather than by more isolated tool prompts.
+
+Near-term target scenario:
+
+1. user starts with a chat request in repo,
+2. session is or becomes bound into the anchor workflow,
+3. runtime progresses through framing/planning/implementing/validating,
+4. user interrupts mid-flight,
+5. user clarifies or redirects,
+6. runtime resumes,
+7. agent completes or blocks cleanly,
+8. a YAML reload or restart path is exercised where feasible.
+
+This is now the single most important product-level gap.
+
+### Priority 2: strengthen context retention/recovery semantics modestly
+
+Sketch7 now has a real context layer and early transcript retention logic.
+The next step should **not** be a large context-policy system.
+
+Instead, we should tighten a few targeted semantics:
+
+- better protection of the active user ask,
+- better retention of the latest tool chain when it is still semantically active,
+- clearer latest-effective semantics for durable context snapshots,
+- and better explanation of what the model actually saw.
+
+### Priority 3: clarify harness vs runtime boundary
+
+`main.go` is currently a very useful experiment harness, but sketch7 should increasingly separate:
+
+- core runtime behavior,
+- from experiment/CLI bootstrap convenience.
+
+This does not require a large rewrite.
+It does require a cleaner articulation of what is "runtime spine" versus "test harness / experiment wrapper."
+
+### Priority 4: only add more tools when they materially help the product path
+
+The tool surface is now respectable.
+Future additions should be justified by concrete pressure from:
+
+- the anchor workflow scenario,
+- restart/recovery tests,
+- interrupt/resume behavior,
+- or external benchmark pressure.
+
+We should resist adding more tool surface just because it is easy.
+
 ### Milestone 1: executable spine
 
 Deliver:
