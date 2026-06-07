@@ -26,6 +26,24 @@ type StateDefinition struct {
 	EnabledTools    []string
 	Prompt          string
 	AllowedTriggers []string
+	Inputs          StateInputContract
+	Outputs         StateOutputContract
+	Completion      StateCompletionContract
+}
+
+type StateInputContract struct {
+	Required []string
+	Optional []string
+}
+
+type StateOutputContract struct {
+	SchemaName     string
+	RequiredFields []string
+	Strict         bool
+}
+
+type StateCompletionContract struct {
+	SuccessWhen []string
 }
 
 type TransitionDefinition struct {

@@ -127,7 +127,8 @@ func TestLoopRunStopsWhenProviderReturnsOnlyAssistantOutput(t *testing.T) {
 	sessionHistory := logs.NewSessionHistory("session-003")
 	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Summarize the current task."})
 
-	if err := loop.Run(agent, agentDef, nil, sessionHistory, nil); err != nil {
+	err := loop.Run(agent, agentDef, nil, sessionHistory, nil)
+	if err != nil && err.Error() != "loop guard tripped" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	foundAssistant := false
@@ -154,6 +155,101 @@ func TestLoopRunStopsWhenProviderReturnsOnlyAssistantOutput(t *testing.T) {
 	}
 	if foundContextSnapshot {
 		return
+	}
+}
+
+func TestLoopRunRecordsOutputContractEvaluationForAssistantJSON(t *testing.T) {
+	fakeProvider := &provider.FakeProvider{Response: provider.Response{Outputs: []provider.Output{
+		provider.AssistantOutput{Content: `{"state":"act","action_type":"final","summary":"done","completion_signal":true,"final_response":"All done."}`},
+	}}}
+	loop := Loop{
+		Provider: fakeProvider,
+		Tools:    tools.NewRegistry(),
+		Projections: []prompt.Projection{
+			prompt.StaticProjection{ProjectionName: "system", Role: "system", Prompt: "You are a coding agent."},
+			prompt.CognitiveProjection{},
+		},
+		MaxHistory: 10,
+	}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "act", States: []defs.StateDefinition{{
+		Name:   "act",
+		Prompt: "Act now.",
+		Outputs: defs.StateOutputContract{
+			SchemaName:     "coding_step_v1",
+			RequiredFields: []string{"state", "action_type", "summary", "completion_signal"},
+			Strict:         true,
+		},
+	}}}}
+	sessionHistory := logs.NewSessionHistory("session-003b")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Finish the task."})
+
+	err := loop.Run(agent, agentDef, nil, sessionHistory, nil)
+	if err != nil && err.Error() != "loop guard tripped" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	foundEval := false
+	foundCompletion := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.OutputContractEvaluationRecord:
+			if v.ValidationStatus == "valid" && v.ActionType == "final" && v.CompletionSignal {
+				foundEval = true
+			}
+		case logs.CompletionRecord:
+			if v.Completed && v.StopReason == "assistant_only" {
+				foundCompletion = true
+			}
+		}
+	}
+	if !foundEval || !foundCompletion {
+		t.Fatalf("expected output evaluation and completion records, got %#v", sessionHistory.Records)
+	}
+}
+
+func TestLoopRunRecordsToolValidationFailure(t *testing.T) {
+	raw, _ := json.Marshal(map[string]string{})
+	fakeProvider := &provider.FakeProvider{Response: provider.Response{Outputs: []provider.Output{
+		provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-invalid-001", ToolName: "read_file", Arguments: map[string]string{}, RawArgs: raw}},
+	}}}
+	loop := Loop{
+		Provider: fakeProvider,
+		Tools:    tools.NewRegistry(tools.ReadFileTool{RootDir: t.TempDir()}),
+		Projections: []prompt.Projection{
+			prompt.StaticProjection{ProjectionName: "system", Role: "system", Prompt: "You are a coding agent."},
+			prompt.CognitiveProjection{},
+		},
+		MaxHistory: 10,
+	}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file"}}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "act", States: []defs.StateDefinition{{
+		Name:         "act",
+		Prompt:       "Act now.",
+		EnabledTools: []string{"read_file"},
+	}}}}
+	sessionHistory := logs.NewSessionHistory("session-003c")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Read the file."})
+
+	err := loop.Run(agent, agentDef, nil, sessionHistory, nil)
+	if err != nil && err.Error() != "loop guard tripped" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	foundValidation := false
+	foundRetry := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.ToolValidationRecord:
+			if v.ToolName == "read_file" && !v.Valid && len(v.MissingFields) == 1 && v.MissingFields[0] == "path" {
+				foundValidation = true
+			}
+		case logs.RetryRecord:
+			if !v.Recovered && v.Reason == "missing_required_arguments" {
+				foundRetry = true
+			}
+		}
+	}
+	if !foundValidation || !foundRetry {
+		t.Fatalf("expected tool validation and retry records, got %#v", sessionHistory.Records)
 	}
 }
 

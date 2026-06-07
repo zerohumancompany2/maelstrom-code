@@ -94,12 +94,30 @@ type statechartDocument struct {
 }
 
 type stateDocument struct {
-	Name            string   `yaml:"name"`
-	Description     string   `yaml:"description"`
-	VisibleTools    []string `yaml:"visibleTools"`
-	EnabledTools    []string `yaml:"enabledTools"`
-	Prompt          string   `yaml:"prompt"`
-	AllowedTriggers []string `yaml:"allowedTriggers"`
+	Name            string                  `yaml:"name"`
+	Description     string                  `yaml:"description"`
+	VisibleTools    []string                `yaml:"visibleTools"`
+	EnabledTools    []string                `yaml:"enabledTools"`
+	Prompt          string                  `yaml:"prompt"`
+	AllowedTriggers []string                `yaml:"allowedTriggers"`
+	Inputs          stateInputDocument      `yaml:"inputs"`
+	Outputs         stateOutputDocument     `yaml:"outputs"`
+	Completion      stateCompletionDocument `yaml:"completion"`
+}
+
+type stateInputDocument struct {
+	Required []string `yaml:"required"`
+	Optional []string `yaml:"optional"`
+}
+
+type stateOutputDocument struct {
+	SchemaName     string   `yaml:"schema"`
+	RequiredFields []string `yaml:"requiredFields"`
+	Strict         bool     `yaml:"strict"`
+}
+
+type stateCompletionDocument struct {
+	SuccessWhen []string `yaml:"successWhen"`
 }
 
 type transitionDocument struct {
@@ -287,6 +305,18 @@ func toStatechartDefinition(doc statechartDocument) defs.StatechartDefinition {
 			EnabledTools:    append([]string(nil), state.EnabledTools...),
 			Prompt:          state.Prompt,
 			AllowedTriggers: append([]string(nil), state.AllowedTriggers...),
+			Inputs: defs.StateInputContract{
+				Required: append([]string(nil), state.Inputs.Required...),
+				Optional: append([]string(nil), state.Inputs.Optional...),
+			},
+			Outputs: defs.StateOutputContract{
+				SchemaName:     strings.TrimSpace(state.Outputs.SchemaName),
+				RequiredFields: append([]string(nil), state.Outputs.RequiredFields...),
+				Strict:         state.Outputs.Strict,
+			},
+			Completion: defs.StateCompletionContract{
+				SuccessWhen: append([]string(nil), state.Completion.SuccessWhen...),
+			},
 		})
 	}
 	transitions := make([]defs.TransitionDefinition, 0, len(doc.Transitions))

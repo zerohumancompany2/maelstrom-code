@@ -161,6 +161,14 @@ func newSessionRecordByKind(kind string) (SessionRecord, error) {
 		return &ContextSnapshotRecord{}, nil
 	case "inference_envelope":
 		return &InferenceEnvelopeRecord{}, nil
+	case "output_contract_evaluation":
+		return &OutputContractEvaluationRecord{}, nil
+	case "tool_validation":
+		return &ToolValidationRecord{}, nil
+	case "retry":
+		return &RetryRecord{}, nil
+	case "completion":
+		return &CompletionRecord{}, nil
 	default:
 		return nil, fmt.Errorf("unknown session record kind %q", kind)
 	}

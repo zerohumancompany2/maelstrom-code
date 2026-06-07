@@ -48,6 +48,7 @@ func ReduceWorkflowState(history *logs.WorkflowHistory, def defs.WorkflowDefinit
 		}
 	}
 	view.VisibleTools, view.EnabledTools = toolPolicyForState(def.Statechart, view.CurrentState)
+	view.Inputs, view.Outputs, view.Completion = stateContractsForState(def.Statechart, view.CurrentState)
 	return view
 }
 
@@ -88,6 +89,18 @@ func cognitiveViewForState(chart defs.StatechartDefinition, name string) Cogniti
 			VisibleTools: append([]string(nil), state.VisibleTools...),
 			EnabledTools: append([]string(nil), state.EnabledTools...),
 			Prompt:       state.Prompt,
+			Inputs: defs.StateInputContract{
+				Required: append([]string(nil), state.Inputs.Required...),
+				Optional: append([]string(nil), state.Inputs.Optional...),
+			},
+			Outputs: defs.StateOutputContract{
+				SchemaName:     state.Outputs.SchemaName,
+				RequiredFields: append([]string(nil), state.Outputs.RequiredFields...),
+				Strict:         state.Outputs.Strict,
+			},
+			Completion: defs.StateCompletionContract{
+				SuccessWhen: append([]string(nil), state.Completion.SuccessWhen...),
+			},
 		}
 	}
 	return CognitiveView{CurrentState: name}
@@ -101,4 +114,23 @@ func toolPolicyForState(chart defs.StatechartDefinition, name string) ([]string,
 		return append([]string(nil), state.VisibleTools...), append([]string(nil), state.EnabledTools...)
 	}
 	return nil, nil
+}
+
+func stateContractsForState(chart defs.StatechartDefinition, name string) (defs.StateInputContract, defs.StateOutputContract, defs.StateCompletionContract) {
+	for _, state := range chart.States {
+		if state.Name != name {
+			continue
+		}
+		return defs.StateInputContract{
+				Required: append([]string(nil), state.Inputs.Required...),
+				Optional: append([]string(nil), state.Inputs.Optional...),
+			}, defs.StateOutputContract{
+				SchemaName:     state.Outputs.SchemaName,
+				RequiredFields: append([]string(nil), state.Outputs.RequiredFields...),
+				Strict:         state.Outputs.Strict,
+			}, defs.StateCompletionContract{
+				SuccessWhen: append([]string(nil), state.Completion.SuccessWhen...),
+			}
+	}
+	return defs.StateInputContract{}, defs.StateOutputContract{}, defs.StateCompletionContract{}
 }

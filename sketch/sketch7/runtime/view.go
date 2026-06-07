@@ -28,6 +28,9 @@ type CognitiveView struct {
 	VisibleTools []string
 	EnabledTools []string
 	Prompt       string
+	Inputs       defs.StateInputContract
+	Outputs      defs.StateOutputContract
+	Completion   defs.StateCompletionContract
 }
 
 type WorkflowView struct {
@@ -38,6 +41,9 @@ type WorkflowView struct {
 	Description    string
 	Context        string
 	LastBoundAgent string
+	Inputs         defs.StateInputContract
+	Outputs        defs.StateOutputContract
+	Completion     defs.StateCompletionContract
 }
 
 type BindingView struct {

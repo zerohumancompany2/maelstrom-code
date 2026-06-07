@@ -104,6 +104,47 @@ type InferenceEnvelopeRecord struct {
 	IncludedToolNames        []string
 }
 
+type OutputContractEvaluationRecord struct {
+	SessionBaseRecord
+	StateName         string
+	SchemaName        string
+	ParseStatus       string
+	ValidationStatus  string
+	RequiredFields    []string
+	MissingFields     []string
+	WrongState        bool
+	ActionType        string
+	ToolName          string
+	CompletionSignal  bool
+	RawContentPreview string
+}
+
+type ToolValidationRecord struct {
+	SessionBaseRecord
+	CallID         string
+	ToolName       string
+	Valid          bool
+	Reason         string
+	EnabledTools   []string
+	RequiredFields []string
+	MissingFields  []string
+}
+
+type RetryRecord struct {
+	SessionBaseRecord
+	Reason      string
+	Attempt     int
+	Recovered   bool
+	DerivedFrom []string
+}
+
+type CompletionRecord struct {
+	SessionBaseRecord
+	Completed  bool
+	StopReason string
+	Iteration  int
+}
+
 type SessionHistory struct {
 	SessionID string
 	Records   []SessionRecord

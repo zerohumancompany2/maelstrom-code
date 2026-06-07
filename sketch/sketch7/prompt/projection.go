@@ -91,6 +91,12 @@ func (CognitiveProjection) Name() string { return "cognitive-state" }
 func (CognitiveProjection) Build(input Input) (ProjectionResult, error) {
 	state := input.Session.Cognitive
 	content := fmt.Sprintf("Cognitive mode: %s. Prompt: %s. Visible tools: %s. Enabled tools: %s.", state.CurrentState, strings.TrimSpace(state.Prompt), joinListCompat(state.VisibleTools), joinListCompat(state.EnabledTools))
+	if strings.TrimSpace(state.Outputs.SchemaName) != "" || len(state.Outputs.RequiredFields) > 0 {
+		content += fmt.Sprintf(" Required output schema: %s. Required fields: %s.", strings.TrimSpace(state.Outputs.SchemaName), joinListCompat(state.Outputs.RequiredFields))
+	}
+	if len(state.Completion.SuccessWhen) > 0 {
+		content += fmt.Sprintf(" Completion conditions: %s.", joinListCompat(state.Completion.SuccessWhen))
+	}
 	step := ProvenanceStep{ProjectionName: "cognitive-state", Operation: "project-cognitive", OutputDescriptor: "cognitive prompt segment", RuntimeDescriptor: state.CurrentState}
 	return ProjectionResult{Segments: []Segment{PromptSegment{Role: "system", Content: content, Step: step}}, Steps: []ProvenanceStep{step}}, nil
 }
@@ -105,6 +111,12 @@ func (WorkflowProjection) Build(input Input) (ProjectionResult, error) {
 	}
 	workflow := input.Session.Workflow
 	content := fmt.Sprintf("Workflow %s is in state %s. Description: %s. Context: %s. Visible tools: %s. Enabled tools: %s.", workflow.WorkflowID, workflow.CurrentState, workflow.Description, workflow.Context, joinListCompat(workflow.VisibleTools), joinListCompat(workflow.EnabledTools))
+	if strings.TrimSpace(workflow.Outputs.SchemaName) != "" || len(workflow.Outputs.RequiredFields) > 0 {
+		content += fmt.Sprintf(" Required output schema: %s. Required fields: %s.", strings.TrimSpace(workflow.Outputs.SchemaName), joinListCompat(workflow.Outputs.RequiredFields))
+	}
+	if len(workflow.Completion.SuccessWhen) > 0 {
+		content += fmt.Sprintf(" Completion conditions: %s.", joinListCompat(workflow.Completion.SuccessWhen))
+	}
 	step := ProvenanceStep{ProjectionName: "workflow-state", Operation: "project-workflow", OutputDescriptor: "workflow prompt segment", RuntimeDescriptor: workflow.CurrentState}
 	return ProjectionResult{Segments: []Segment{PromptSegment{Role: "system", Content: content, Step: step}}, Steps: []ProvenanceStep{step}}, nil
 }
