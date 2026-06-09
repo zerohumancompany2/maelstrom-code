@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,28 +46,6 @@ func run() error {
 			return err
 		}
 	}
-	modelDef, ok := firstModel(memory)
-	if !ok {
-		modelDef = defaultModelDefinition()
-	}
-	agentDef, ok := firstAgent(memory)
-	if !ok {
-		agentDef = defaultAgentDefinition(modelDef.Name)
-	}
-	workflowDef, hasWorkflow := firstWorkflow(memory)
-	toolRegistry := buildToolRegistry()
-	hydratedAgent, err := compile.HydrateAgent(agentDef, modelDef, toolRegistry)
-	if err != nil {
-		return err
-	}
-	projections, maxHistory, err := prompt.BuildProjectionPlan(agentDef)
-	if err != nil {
-		return err
-	}
-	providerAdapter, err := providerFromEnv()
-	if err != nil {
-		return err
-	}
 	statePath := strings.TrimSpace(args.statePath)
 	if statePath == "" && strings.TrimSpace(args.sessionID) != "" {
 		statePath = filepath.Join(".maelstrom", "sessions", args.sessionID+".json")
@@ -89,6 +68,37 @@ func run() error {
 			sessionID = "session-001"
 		}
 		sessionHistory = logs.NewSessionHistory(sessionID)
+	}
+	if (args.showStats || args.showReport) && strings.TrimSpace(args.prompt) == "" {
+		stats := logs.ReduceSessionStats(sessionHistory)
+		if args.showReport {
+			printSessionReport(stats, args)
+			return nil
+		}
+		printSessionStats(stats, args)
+		return nil
+	}
+	modelDef, ok := firstModel(memory)
+	if !ok {
+		modelDef = defaultModelDefinition()
+	}
+	agentDef, ok := firstAgent(memory)
+	if !ok {
+		agentDef = defaultAgentDefinition(modelDef.Name)
+	}
+	workflowDef, hasWorkflow := firstWorkflow(memory)
+	toolRegistry := buildToolRegistry()
+	hydratedAgent, err := compile.HydrateAgent(agentDef, modelDef, toolRegistry)
+	if err != nil {
+		return err
+	}
+	projections, maxHistory, err := prompt.BuildProjectionPlan(agentDef)
+	if err != nil {
+		return err
+	}
+	providerAdapter, err := providerFromEnv()
+	if err != nil {
+		return err
 	}
 	if hasWorkflow && workflowHistory == nil {
 		workflowID := sessionHistory.SessionID + ":" + workflowDef.Name
@@ -125,6 +135,10 @@ func run() error {
 	if runErr != nil {
 		return runErr
 	}
+	if args.showReport {
+		printSessionReport(logs.ReduceSessionStats(sessionHistory), args)
+		return nil
+	}
 	if args.showStats {
 		printSessionStats(logs.ReduceSessionStats(sessionHistory), args)
 		return nil
@@ -144,9 +158,11 @@ type cliArgs struct {
 	statePath    string
 	stopToken    string
 	showStats    bool
+	showReport   bool
 	statsSection string
 	statsTool    string
 	statsState   string
+	statsFormat  string
 }
 
 func parseArgs(args []string) (cliArgs, error) {
@@ -197,6 +213,8 @@ func parseArgs(args []string) (cliArgs, error) {
 			parsed.stopToken = args[i]
 		case "--stats":
 			parsed.showStats = true
+		case "--report":
+			parsed.showReport = true
 		case "--section":
 			i++
 			if i >= len(args) {
@@ -215,6 +233,12 @@ func parseArgs(args []string) (cliArgs, error) {
 				return cliArgs{}, fmt.Errorf("missing value for --state-filter")
 			}
 			parsed.statsState = args[i]
+		case "--format":
+			i++
+			if i >= len(args) {
+				return cliArgs{}, fmt.Errorf("missing value for --format")
+			}
+			parsed.statsFormat = args[i]
 		default:
 			return cliArgs{}, fmt.Errorf("unknown argument %q", args[i])
 		}
@@ -226,6 +250,10 @@ func parseArgs(args []string) (cliArgs, error) {
 }
 
 func printSessionStats(stats logs.SessionStats, args cliArgs) {
+	if strings.EqualFold(strings.TrimSpace(args.statsFormat), "json") {
+		printSessionStatsJSON(stats, args)
+		return
+	}
 	if strings.TrimSpace(args.statsTool) != "" {
 		printToolStats(stats, args.statsTool)
 		return
@@ -250,6 +278,146 @@ func printSessionStats(stats logs.SessionStats, args cliArgs) {
 	default:
 		fmt.Printf("unknown stats section %q\n", args.statsSection)
 	}
+}
+
+func printSessionStatsJSON(stats logs.SessionStats, args cliArgs) {
+	var value any = stats
+	if strings.TrimSpace(args.statsTool) != "" {
+		tool, ok := stats.ByTool[args.statsTool]
+		if !ok {
+			value = map[string]any{"tool": args.statsTool, "error": "not found"}
+		} else {
+			value = map[string]any{"tool": args.statsTool, "stats": tool}
+		}
+	} else if strings.TrimSpace(args.statsState) != "" {
+		state, ok := stats.ByState[args.statsState]
+		if !ok {
+			value = map[string]any{"state": args.statsState, "error": "not found"}
+		} else {
+			value = map[string]any{"state": args.statsState, "stats": state}
+		}
+	} else {
+		switch strings.TrimSpace(args.statsSection) {
+		case "":
+			value = stats
+		case "records":
+			value = stats.RecordCounts
+		case "output":
+			value = stats.Output
+		case "tools":
+			value = map[string]any{"summary": stats.Tools, "by_tool": stats.ByTool}
+		case "retry":
+			value = stats.Retry
+		case "completion":
+			value = map[string]any{"summary": stats.Completion, "stop_reasons": stats.StopReasons}
+		default:
+			value = map[string]any{"section": args.statsSection, "error": "unknown section"}
+		}
+	}
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		fmt.Printf("failed to marshal stats json: %v\n", err)
+		return
+	}
+	fmt.Println(string(data))
+}
+
+func printSessionReport(stats logs.SessionStats, args cliArgs) {
+	if strings.EqualFold(strings.TrimSpace(args.statsFormat), "json") {
+		printSessionReportJSON(stats)
+		return
+	}
+	fmt.Printf("report: %s\n", stats.SessionID)
+	fmt.Printf("completion: %s\n", reportCompletionLine(stats.Completion))
+	fmt.Printf("output: total=%d valid=%d invalid=%d missing_required=%d wrong_state=%d\n", stats.Output.Total, stats.Output.Valid, stats.Output.Invalid, stats.Output.MissingRequired, stats.Output.WrongState)
+	fmt.Printf("tools: proposed=%d valid=%d invalid=%d executed=%d success=%d failures=%d\n", stats.Tools.Proposed, stats.Tools.ValidProposals, stats.Tools.InvalidProposals, stats.Tools.Executed, stats.Tools.ExecutionSuccess, stats.Tools.ExecutionFailures)
+	fmt.Printf("retry: total=%d recovered=%d unrecovered=%d\n", stats.Retry.Total, stats.Retry.Recovered, stats.Retry.Unrecovered)
+	fmt.Println("dominant failure modes:")
+	for _, line := range dominantFailureModes(stats) {
+		fmt.Printf("  - %s\n", line)
+	}
+	fmt.Println("recommended changes:")
+	for _, line := range recommendedChanges(stats) {
+		fmt.Printf("  - %s\n", line)
+	}
+}
+
+func printSessionReportJSON(stats logs.SessionStats) {
+	value := map[string]any{
+		"session_id":             stats.SessionID,
+		"completion":             reportCompletionLine(stats.Completion),
+		"dominant_failure_modes": dominantFailureModes(stats),
+		"recommended_changes":    recommendedChanges(stats),
+		"stats":                  stats,
+	}
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		fmt.Printf("failed to marshal report json: %v\n", err)
+		return
+	}
+	fmt.Println(string(data))
+}
+
+func reportCompletionLine(completion logs.CompletionStats) string {
+	if completion.LatestCompleted {
+		return fmt.Sprintf("completed (%s)", completion.LatestStopReason)
+	}
+	if strings.TrimSpace(completion.LatestStopReason) == "" {
+		return "incomplete"
+	}
+	return fmt.Sprintf("incomplete (%s)", completion.LatestStopReason)
+}
+
+func dominantFailureModes(stats logs.SessionStats) []string {
+	modes := []string{}
+	if stats.Output.Invalid > 0 {
+		modes = append(modes, fmt.Sprintf("invalid output contract evaluations: %d", stats.Output.Invalid))
+	}
+	if stats.Output.MissingRequired > 0 {
+		modes = append(modes, fmt.Sprintf("missing required output fields: %d", stats.Output.MissingRequired))
+	}
+	if stats.Output.WrongState > 0 {
+		modes = append(modes, fmt.Sprintf("wrong-state emissions: %d", stats.Output.WrongState))
+	}
+	if stats.Tools.InvalidProposals > 0 {
+		modes = append(modes, fmt.Sprintf("invalid tool proposals: %d", stats.Tools.InvalidProposals))
+	}
+	if stats.Tools.ExecutionFailures > 0 {
+		modes = append(modes, fmt.Sprintf("tool execution failures: %d", stats.Tools.ExecutionFailures))
+	}
+	if stats.Retry.Unrecovered > 0 {
+		modes = append(modes, fmt.Sprintf("unrecovered retries: %d", stats.Retry.Unrecovered))
+	}
+	if len(modes) == 0 {
+		modes = append(modes, "no dominant failure modes detected in current session")
+	}
+	return modes
+}
+
+func recommendedChanges(stats logs.SessionStats) []string {
+	changes := []string{}
+	if stats.Output.Invalid > 0 || stats.Output.MissingRequired > 0 {
+		changes = append(changes, "tighten state output projection text and simplify required output fields in state contracts")
+	}
+	if stats.Output.WrongState > 0 {
+		changes = append(changes, "improve state-local prompt projection and validate state field more explicitly at the loop boundary")
+	}
+	if stats.Tools.InvalidProposals > 0 {
+		changes = append(changes, "tighten tool argument validation feedback and simplify ambiguous tool interfaces")
+	}
+	if stats.Tools.ExecutionFailures > 0 {
+		changes = append(changes, "improve tool execution error surfacing and exact-match tool semantics")
+	}
+	if stats.Retry.Unrecovered > 0 {
+		changes = append(changes, "improve retry nudges and preserve structured validation errors in retry feedback")
+	}
+	if !stats.Completion.LatestCompleted {
+		changes = append(changes, "tighten completion signaling and loop stop conditions")
+	}
+	if len(changes) == 0 {
+		changes = append(changes, "current session looks healthy; next step is to validate against broader eval tasks")
+	}
+	return changes
 }
 
 func printStatsSummary(stats logs.SessionStats) {
