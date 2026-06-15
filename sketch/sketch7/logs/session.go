@@ -147,6 +147,7 @@ type CompletionRecord struct {
 
 type SessionHistory struct {
 	SessionID string
+	AgentID   string
 	Records   []SessionRecord
 	sequence  int
 	bundles   int

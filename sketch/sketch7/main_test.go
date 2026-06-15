@@ -45,6 +45,16 @@ func TestParseArgsAcceptsReportFlag(t *testing.T) {
 	}
 }
 
+func TestParseArgsAcceptsAggregateByAgentWithoutPrompt(t *testing.T) {
+	args, err := parseArgs([]string{"--aggregate-by-agent", "--format", "json"})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if !args.aggregateByAgent {
+		t.Fatal("expected aggregateByAgent to be true")
+	}
+}
+
 func TestPrintSessionStatsJSONOutputsStructuredPayload(t *testing.T) {
 	stats := logs.SessionStats{
 		SessionID:    "session-200",
@@ -183,6 +193,46 @@ func TestRunWithReportReadsSavedSessionAndPrintsReport(t *testing.T) {
 	}
 	if !strings.Contains(output, "loop_guard") {
 		t.Fatalf("expected stop reason in output, got %s", output)
+	}
+}
+
+func TestRunWithAggregateByAgentPrintsAggregateJSON(t *testing.T) {
+	tempDir := t.TempDir()
+	oldArgs := os.Args
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(oldWd)
+		os.Args = oldArgs
+	}()
+
+	sessionDir := filepath.Join(tempDir, ".maelstrom", "sessions")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	history := logs.NewSessionHistory("session-agg")
+	history.AgentID = "maelstrom-code"
+	history.Append(logs.CompletionRecord{SessionBaseRecord: history.NextRecord("completion"), Completed: true, StopReason: "assistant_only", Iteration: 1})
+	if err := logs.SaveState(filepath.Join(sessionDir, "session-agg.json"), history, nil); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	os.Args = []string{"sketch7", "--aggregate-by-agent", "--format", "json"}
+	output := captureStdout(t, func() {
+		if err := run(); err != nil {
+			t.Fatalf("run returned error: %v", err)
+		}
+	})
+	if !strings.Contains(output, `"agent_id": "maelstrom-code"`) {
+		t.Fatalf("expected aggregated agent output, got %s", output)
+	}
+	if !strings.Contains(output, `"session_count": 1`) {
+		t.Fatalf("expected session count in output, got %s", output)
 	}
 }
 

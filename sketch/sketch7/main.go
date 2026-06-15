@@ -33,6 +33,16 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	sessionDir := filepath.Join(".maelstrom", "sessions")
+	store := logs.FileSessionStore{SessionDir: sessionDir}
+	if args.aggregateByAgent {
+		report, err := logs.AggregateSessionStatsByAgentStore(store, sessionDir)
+		if err != nil {
+			return err
+		}
+		printAggregateByAgent(report, args)
+		return nil
+	}
 	memory := catalog.NewMemory()
 	for _, path := range []string{args.modelPath, args.agentPath, args.workflowPath} {
 		if strings.TrimSpace(path) == "" {
@@ -47,9 +57,6 @@ func run() error {
 		}
 	}
 	statePath := strings.TrimSpace(args.statePath)
-	if statePath == "" && strings.TrimSpace(args.sessionID) != "" {
-		statePath = filepath.Join(".maelstrom", "sessions", args.sessionID+".json")
-	}
 	var sessionHistory *logs.SessionHistory
 	var workflowHistory *logs.WorkflowHistory
 	if statePath != "" {
@@ -60,6 +67,14 @@ func run() error {
 			}
 			sessionHistory = loadedSession
 			workflowHistory = loadedWorkflow
+		}
+	} else if strings.TrimSpace(args.sessionID) != "" {
+		loadedSession, loadedWorkflow, err := store.LoadSession(strings.TrimSpace(args.sessionID))
+		if err == nil {
+			sessionHistory = loadedSession
+			workflowHistory = loadedWorkflow
+		} else if !os.IsNotExist(err) {
+			return err
 		}
 	}
 	if sessionHistory == nil {
@@ -85,6 +100,9 @@ func run() error {
 	agentDef, ok := firstAgent(memory)
 	if !ok {
 		agentDef = defaultAgentDefinition(modelDef.Name)
+	}
+	if strings.TrimSpace(sessionHistory.AgentID) == "" {
+		sessionHistory.AgentID = agentDef.Name
 	}
 	workflowDef, hasWorkflow := firstWorkflow(memory)
 	toolRegistry := buildToolRegistry()
@@ -131,6 +149,13 @@ func run() error {
 			}
 			return err
 		}
+	} else if strings.TrimSpace(args.sessionID) != "" {
+		if err := store.SaveSession(strings.TrimSpace(args.sessionID), sessionHistory, workflowHistory); err != nil {
+			if runErr != nil {
+				return fmt.Errorf("%v (also failed to save session: %w)", runErr, err)
+			}
+			return err
+		}
 	}
 	if runErr != nil {
 		return runErr
@@ -150,19 +175,20 @@ func run() error {
 }
 
 type cliArgs struct {
-	modelPath    string
-	agentPath    string
-	workflowPath string
-	prompt       string
-	sessionID    string
-	statePath    string
-	stopToken    string
-	showStats    bool
-	showReport   bool
-	statsSection string
-	statsTool    string
-	statsState   string
-	statsFormat  string
+	modelPath        string
+	agentPath        string
+	workflowPath     string
+	prompt           string
+	sessionID        string
+	statePath        string
+	stopToken        string
+	showStats        bool
+	showReport       bool
+	aggregateByAgent bool
+	statsSection     string
+	statsTool        string
+	statsState       string
+	statsFormat      string
 }
 
 func parseArgs(args []string) (cliArgs, error) {
@@ -215,6 +241,8 @@ func parseArgs(args []string) (cliArgs, error) {
 			parsed.showStats = true
 		case "--report":
 			parsed.showReport = true
+		case "--aggregate-by-agent":
+			parsed.aggregateByAgent = true
 		case "--section":
 			i++
 			if i >= len(args) {
@@ -244,6 +272,9 @@ func parseArgs(args []string) (cliArgs, error) {
 		}
 	}
 	if parsed.prompt == "" && parsed.statePath == "" && parsed.sessionID == "" {
+		if parsed.aggregateByAgent {
+			return parsed, nil
+		}
 		return cliArgs{}, fmt.Errorf("--prompt is required unless resuming with --state or --session-id")
 	}
 	return parsed, nil
@@ -418,6 +449,29 @@ func recommendedChanges(stats logs.SessionStats) []string {
 		changes = append(changes, "current session looks healthy; next step is to validate against broader eval tasks")
 	}
 	return changes
+}
+
+func printAggregateByAgent(report logs.SessionAggregateReport, args cliArgs) {
+	if strings.EqualFold(strings.TrimSpace(args.statsFormat), "json") {
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Printf("failed to marshal aggregate json: %v\n", err)
+			return
+		}
+		fmt.Println(string(data))
+		return
+	}
+	fmt.Printf("aggregate-by-agent: %s\n", report.SessionDir)
+	for _, agentID := range logs.SortedMapKeys(report.Agents) {
+		agg := report.Agents[agentID]
+		fmt.Printf("agent: %s\n", agentID)
+		fmt.Printf("  sessions: %d\n", agg.SessionCount)
+		fmt.Printf("  completion_rate: %.2f\n", agg.CompletionRate)
+		fmt.Printf("  invalid_rate: %.2f\n", agg.InvalidRate)
+		fmt.Printf("  tool_failure_rate: %.2f\n", agg.ToolFailureRate)
+		fmt.Printf("  retry_failure_rate: %.2f\n", agg.RetryFailureRate)
+		fmt.Printf("  session_ids: %s\n", strings.Join(agg.SessionIDs, ", "))
+	}
 }
 
 func printStatsSummary(stats logs.SessionStats) {

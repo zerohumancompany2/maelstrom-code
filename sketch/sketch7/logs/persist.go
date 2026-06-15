@@ -9,6 +9,7 @@ import (
 
 type persistedState struct {
 	SessionID       string            `json:"session_id"`
+	AgentID         string            `json:"agent_id,omitempty"`
 	SessionSequence int               `json:"session_sequence"`
 	SessionBundles  int               `json:"session_bundles"`
 	SessionRecords  []json.RawMessage `json:"session_records"`
@@ -26,6 +27,7 @@ func SaveState(path string, session *SessionHistory, workflow *WorkflowHistory) 
 	state := persistedState{}
 	if session != nil {
 		state.SessionID = session.SessionID
+		state.AgentID = session.AgentID
 		state.SessionSequence = session.sequence
 		state.SessionBundles = session.bundles
 		for _, record := range session.Records {
@@ -67,6 +69,7 @@ func LoadState(path string) (*SessionHistory, *WorkflowHistory, error) {
 		return nil, nil, err
 	}
 	session := NewSessionHistory(state.SessionID)
+	session.AgentID = state.AgentID
 	session.sequence = state.SessionSequence
 	session.bundles = state.SessionBundles
 	for _, item := range state.SessionRecords {
