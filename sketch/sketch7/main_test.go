@@ -144,6 +144,12 @@ func TestPrintSessionReportJSONOutputsRecommendations(t *testing.T) {
 	if !strings.Contains(output, `"recommended_changes"`) {
 		t.Fatalf("expected recommended changes in output, got %s", output)
 	}
+	if !strings.Contains(output, `"attribution"`) {
+		t.Fatalf("expected attribution in output, got %s", output)
+	}
+	if !strings.Contains(output, `"files"`) || !strings.Contains(output, `"layer"`) {
+		t.Fatalf("expected structured recommendation fields in output, got %s", output)
+	}
 	if !strings.Contains(output, `"dominant_failure_modes"`) {
 		t.Fatalf("expected dominant failure modes in output, got %s", output)
 	}
@@ -190,6 +196,12 @@ func TestRunWithReportReadsSavedSessionAndPrintsReport(t *testing.T) {
 	}
 	if !strings.Contains(output, "recommended changes:") {
 		t.Fatalf("expected recommendations in output, got %s", output)
+	}
+	if !strings.Contains(output, "attribution:") {
+		t.Fatalf("expected attribution in output, got %s", output)
+	}
+	if !strings.Contains(output, "sketch/sketch7/prompt/projection.go") {
+		t.Fatalf("expected likely file attribution in output, got %s", output)
 	}
 	if !strings.Contains(output, "loop_guard") {
 		t.Fatalf("expected stop reason in output, got %s", output)

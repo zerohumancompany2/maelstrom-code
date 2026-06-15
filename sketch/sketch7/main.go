@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -363,13 +364,16 @@ func printSessionReport(stats logs.SessionStats, args cliArgs) {
 	fmt.Printf("output: total=%d valid=%d invalid=%d missing_required=%d wrong_state=%d\n", stats.Output.Total, stats.Output.Valid, stats.Output.Invalid, stats.Output.MissingRequired, stats.Output.WrongState)
 	fmt.Printf("tools: proposed=%d valid=%d invalid=%d executed=%d success=%d failures=%d\n", stats.Tools.Proposed, stats.Tools.ValidProposals, stats.Tools.InvalidProposals, stats.Tools.Executed, stats.Tools.ExecutionSuccess, stats.Tools.ExecutionFailures)
 	fmt.Printf("retry: total=%d recovered=%d unrecovered=%d\n", stats.Retry.Total, stats.Retry.Recovered, stats.Retry.Unrecovered)
+	printReportAttribution(stats)
 	fmt.Println("dominant failure modes:")
-	for _, line := range dominantFailureModes(stats) {
-		fmt.Printf("  - %s\n", line)
+	for _, failure := range dominantFailureModes(stats) {
+		fmt.Printf("  - [%s] %s (layer: %s)\n", failure.Severity, failure.Summary, failure.Layer)
 	}
 	fmt.Println("recommended changes:")
-	for _, line := range recommendedChanges(stats) {
-		fmt.Printf("  - %s\n", line)
+	for _, recommendation := range recommendedChanges(stats) {
+		fmt.Printf("  - [%s] %s\n", recommendation.Severity, recommendation.Change)
+		fmt.Printf("    layer: %s\n", recommendation.Layer)
+		fmt.Printf("    files: %s\n", strings.Join(recommendation.Files, ", "))
 	}
 }
 
@@ -377,6 +381,7 @@ func printSessionReportJSON(stats logs.SessionStats) {
 	value := map[string]any{
 		"session_id":             stats.SessionID,
 		"completion":             reportCompletionLine(stats.Completion),
+		"attribution":            reportAttribution(stats),
 		"dominant_failure_modes": dominantFailureModes(stats),
 		"recommended_changes":    recommendedChanges(stats),
 		"stats":                  stats,
@@ -399,56 +404,188 @@ func reportCompletionLine(completion logs.CompletionStats) string {
 	return fmt.Sprintf("incomplete (%s)", completion.LatestStopReason)
 }
 
-func dominantFailureModes(stats logs.SessionStats) []string {
-	modes := []string{}
+type ReportFailure struct {
+	Severity string `json:"severity"`
+	Layer    string `json:"layer"`
+	Summary  string `json:"summary"`
+	Target   string `json:"target,omitempty"`
+}
+
+type ReportRecommendation struct {
+	Severity string   `json:"severity"`
+	Layer    string   `json:"layer"`
+	Change   string   `json:"change"`
+	Files    []string `json:"files"`
+	Target   string   `json:"target,omitempty"`
+}
+
+type countEntry struct {
+	Key   string `json:"key"`
+	Count int    `json:"count"`
+}
+
+func dominantFailureModes(stats logs.SessionStats) []ReportFailure {
+	modes := []ReportFailure{}
 	if stats.Output.Invalid > 0 {
-		modes = append(modes, fmt.Sprintf("invalid output contract evaluations: %d", stats.Output.Invalid))
+		modes = append(modes, ReportFailure{Severity: "high", Layer: "output_contract", Summary: fmt.Sprintf("invalid output contract evaluations: %d", stats.Output.Invalid), Target: topKey(stats.Output.ByValidationStatus)})
 	}
 	if stats.Output.MissingRequired > 0 {
-		modes = append(modes, fmt.Sprintf("missing required output fields: %d", stats.Output.MissingRequired))
+		modes = append(modes, ReportFailure{Severity: "high", Layer: "output_contract", Summary: fmt.Sprintf("missing required output fields: %d", stats.Output.MissingRequired), Target: topKey(stats.Output.MissingFieldCounts)})
 	}
 	if stats.Output.WrongState > 0 {
-		modes = append(modes, fmt.Sprintf("wrong-state emissions: %d", stats.Output.WrongState))
+		modes = append(modes, ReportFailure{Severity: "high", Layer: "state_projection", Summary: fmt.Sprintf("wrong-state emissions: %d", stats.Output.WrongState), Target: topFailingState(stats.ByState)})
 	}
 	if stats.Tools.InvalidProposals > 0 {
-		modes = append(modes, fmt.Sprintf("invalid tool proposals: %d", stats.Tools.InvalidProposals))
+		modes = append(modes, ReportFailure{Severity: "medium", Layer: "tool_validation", Summary: fmt.Sprintf("invalid tool proposals: %d", stats.Tools.InvalidProposals), Target: topInvalidTool(stats.ByTool)})
 	}
 	if stats.Tools.ExecutionFailures > 0 {
-		modes = append(modes, fmt.Sprintf("tool execution failures: %d", stats.Tools.ExecutionFailures))
+		modes = append(modes, ReportFailure{Severity: "medium", Layer: "tool_execution", Summary: fmt.Sprintf("tool execution failures: %d", stats.Tools.ExecutionFailures), Target: topExecutionFailureTool(stats.ByTool)})
 	}
 	if stats.Retry.Unrecovered > 0 {
-		modes = append(modes, fmt.Sprintf("unrecovered retries: %d", stats.Retry.Unrecovered))
+		modes = append(modes, ReportFailure{Severity: "medium", Layer: "retry", Summary: fmt.Sprintf("unrecovered retries: %d", stats.Retry.Unrecovered), Target: topKey(stats.Retry.Attribution.ByCauseKind)})
 	}
 	if len(modes) == 0 {
-		modes = append(modes, "no dominant failure modes detected in current session")
+		modes = append(modes, ReportFailure{Severity: "info", Layer: "session", Summary: "no dominant failure modes detected in current session"})
 	}
 	return modes
 }
 
-func recommendedChanges(stats logs.SessionStats) []string {
-	changes := []string{}
+func recommendedChanges(stats logs.SessionStats) []ReportRecommendation {
+	changes := []ReportRecommendation{}
 	if stats.Output.Invalid > 0 || stats.Output.MissingRequired > 0 {
-		changes = append(changes, "tighten state output projection text and simplify required output fields in state contracts")
+		changes = append(changes, ReportRecommendation{Severity: "high", Layer: "output_contract", Change: "tighten state output projection text and simplify required output fields in state contracts", Files: []string{"sketch/sketch7/prompt/projection.go", "sketch/sketch7/runner/loop.go", "sketch/sketch7/defs/workflow.go"}, Target: topKey(stats.Output.BySchema)})
 	}
 	if stats.Output.WrongState > 0 {
-		changes = append(changes, "improve state-local prompt projection and validate state field more explicitly at the loop boundary")
+		changes = append(changes, ReportRecommendation{Severity: "high", Layer: "state_projection", Change: "improve state-local prompt projection and validate state field more explicitly at the loop boundary", Files: []string{"sketch/sketch7/prompt/projection.go", "sketch/sketch7/runtime/reduce.go", "sketch/sketch7/runner/loop.go"}, Target: topFailingState(stats.ByState)})
 	}
 	if stats.Tools.InvalidProposals > 0 {
-		changes = append(changes, "tighten tool argument validation feedback and simplify ambiguous tool interfaces")
+		changes = append(changes, ReportRecommendation{Severity: "medium", Layer: "tool_validation", Change: "tighten tool argument validation feedback and simplify ambiguous tool interfaces", Files: []string{"sketch/sketch7/runner/loop.go", "sketch/sketch7/tools/*.go", "sketch/sketch7/provider/provider.go"}, Target: topInvalidTool(stats.ByTool)})
 	}
 	if stats.Tools.ExecutionFailures > 0 {
-		changes = append(changes, "improve tool execution error surfacing and exact-match tool semantics")
+		changes = append(changes, ReportRecommendation{Severity: "medium", Layer: "tool_execution", Change: "improve tool execution error surfacing and exact-match tool semantics", Files: []string{"sketch/sketch7/tools/*.go", "sketch/sketch7/tools/*_test.go"}, Target: topExecutionFailureTool(stats.ByTool)})
 	}
 	if stats.Retry.Unrecovered > 0 {
-		changes = append(changes, "improve retry nudges and preserve structured validation errors in retry feedback")
+		changes = append(changes, ReportRecommendation{Severity: "medium", Layer: "retry", Change: "improve retry nudges and preserve structured validation errors in retry feedback", Files: []string{"sketch/sketch7/runner/loop.go", "sketch/sketch7/provider/openai_compatible.go"}, Target: topKey(stats.Retry.Attribution.ByCauseKind)})
 	}
 	if !stats.Completion.LatestCompleted {
-		changes = append(changes, "tighten completion signaling and loop stop conditions")
+		changes = append(changes, ReportRecommendation{Severity: "medium", Layer: "loop_completion", Change: "tighten completion signaling and loop stop conditions", Files: []string{"sketch/sketch7/runner/loop.go", "sketch/sketch7/main.go", "sketch/sketch7/runner/loop_test.go"}, Target: stats.Completion.LatestStopReason})
 	}
 	if len(changes) == 0 {
-		changes = append(changes, "current session looks healthy; next step is to validate against broader eval tasks")
+		changes = append(changes, ReportRecommendation{Severity: "info", Layer: "eval", Change: "current session looks healthy; next step is to validate against broader eval tasks", Files: []string{"docs/evals.md", "docs/planning/state-scoped-io-contracts-rollout.md"}})
 	}
 	return changes
+}
+
+func printReportAttribution(stats logs.SessionStats) {
+	fmt.Println("attribution:")
+	printTopCountMap("  validation_statuses", stats.Output.ByValidationStatus)
+	printTopCountMap("  parse_statuses", stats.Output.ByParseStatus)
+	printTopCountMap("  schemas", stats.Output.BySchema)
+	printTopCountMap("  missing_output_fields", stats.Output.MissingFieldCounts)
+	printTopCountMap("  tool_invalid_reasons", stats.Tools.ByReason)
+	printTopCountMap("  retry_causes", stats.Retry.Attribution.ByCauseKind)
+	printTopCountMap("  retry_tools", stats.Retry.Attribution.ByTool)
+	printTopCountMap("  models", stats.ModelRefs)
+	printTopCountMap("  providers", stats.ProviderRefs)
+	if stats.Completion.LatestCognitiveState != "" || stats.Completion.LatestWorkflowState != "" {
+		fmt.Printf("  terminal_state: cognitive=%s workflow=%s iteration=%d\n", stats.Completion.LatestCognitiveState, stats.Completion.LatestWorkflowState, stats.Completion.LatestIteration)
+	}
+}
+
+func printTopCountMap(label string, values map[string]int) {
+	fmt.Printf("%s:\n", label)
+	entries := topCountEntries(values, 5)
+	if len(entries) == 0 {
+		fmt.Println("    none")
+		return
+	}
+	for _, entry := range entries {
+		fmt.Printf("    %s: %d\n", entry.Key, entry.Count)
+	}
+}
+
+func reportAttribution(stats logs.SessionStats) map[string]any {
+	return map[string]any{
+		"validation_statuses":      topCountEntries(stats.Output.ByValidationStatus, 5),
+		"parse_statuses":           topCountEntries(stats.Output.ByParseStatus, 5),
+		"schemas":                  topCountEntries(stats.Output.BySchema, 5),
+		"missing_output_fields":    topCountEntries(stats.Output.MissingFieldCounts, 5),
+		"tool_invalid_reasons":     topCountEntries(stats.Tools.ByReason, 5),
+		"retry_causes":             topCountEntries(stats.Retry.Attribution.ByCauseKind, 5),
+		"retry_tools":              topCountEntries(stats.Retry.Attribution.ByTool, 5),
+		"models":                   topCountEntries(stats.ModelRefs, 5),
+		"providers":                topCountEntries(stats.ProviderRefs, 5),
+		"terminal_cognitive_state": stats.Completion.LatestCognitiveState,
+		"terminal_workflow_state":  stats.Completion.LatestWorkflowState,
+		"terminal_iteration":       stats.Completion.LatestIteration,
+	}
+}
+
+func topCountEntries(values map[string]int, limit int) []countEntry {
+	entries := make([]countEntry, 0, len(values))
+	for key, count := range values {
+		if key == "" || count == 0 {
+			continue
+		}
+		entries = append(entries, countEntry{Key: key, Count: count})
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Count == entries[j].Count {
+			return entries[i].Key < entries[j].Key
+		}
+		return entries[i].Count > entries[j].Count
+	})
+	if limit > 0 && len(entries) > limit {
+		return entries[:limit]
+	}
+	return entries
+}
+
+func topKey(values map[string]int) string {
+	entries := topCountEntries(values, 1)
+	if len(entries) == 0 {
+		return ""
+	}
+	return entries[0].Key
+}
+
+func topFailingState(values map[string]logs.PerStateStats) string {
+	best := ""
+	bestScore := 0
+	for key, state := range values {
+		score := state.Invalid + state.MissingRequired + state.WrongState
+		if score > bestScore || (score == bestScore && score > 0 && (best == "" || key < best)) {
+			best = key
+			bestScore = score
+		}
+	}
+	return best
+}
+
+func topInvalidTool(values map[string]logs.PerToolStats) string {
+	best := ""
+	bestScore := 0
+	for key, tool := range values {
+		score := tool.InvalidProposals
+		if score > bestScore || (score == bestScore && score > 0 && (best == "" || key < best)) {
+			best = key
+			bestScore = score
+		}
+	}
+	return best
+}
+
+func topExecutionFailureTool(values map[string]logs.PerToolStats) string {
+	best := ""
+	bestScore := 0
+	for key, tool := range values {
+		score := tool.ExecutionFailures
+		if score > bestScore || (score == bestScore && score > 0 && (best == "" || key < best)) {
+			best = key
+			bestScore = score
+		}
+	}
+	return best
 }
 
 func printAggregateByAgent(report logs.SessionAggregateReport, args cliArgs) {

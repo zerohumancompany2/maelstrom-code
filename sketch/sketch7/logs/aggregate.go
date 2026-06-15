@@ -1,16 +1,32 @@
 package logs
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 type AgentAggregate struct {
-	AgentID          string       `json:"agent_id"`
-	SessionCount     int          `json:"session_count"`
-	Combined         SessionStats `json:"combined"`
-	SessionIDs       []string     `json:"session_ids"`
-	CompletionRate   float64      `json:"completion_rate"`
-	InvalidRate      float64      `json:"invalid_rate"`
-	ToolFailureRate  float64      `json:"tool_failure_rate"`
-	RetryFailureRate float64      `json:"retry_failure_rate"`
+	AgentID                 string                   `json:"agent_id"`
+	SessionCount            int                      `json:"session_count"`
+	Combined                SessionStats             `json:"combined"`
+	SessionIDs              []string                 `json:"session_ids"`
+	TopInvalidSessions      []TopContributingSession `json:"top_invalid_sessions"`
+	TopToolFailureSessions  []TopContributingSession `json:"top_tool_failure_sessions"`
+	TopRetryFailureSessions []TopContributingSession `json:"top_retry_failure_sessions"`
+	IncompleteSessions      []TopContributingSession `json:"incomplete_sessions"`
+	CompletionRate          float64                  `json:"completion_rate"`
+	InvalidRate             float64                  `json:"invalid_rate"`
+	ToolFailureRate         float64                  `json:"tool_failure_rate"`
+	RetryFailureRate        float64                  `json:"retry_failure_rate"`
+}
+
+type TopContributingSession struct {
+	SessionID             string `json:"session_id"`
+	AgentID               string `json:"agent_id"`
+	InvalidOutputs        int    `json:"invalid_outputs"`
+	ToolFailures          int    `json:"tool_failures"`
+	UnrecoveredRetries    int    `json:"unrecovered_retries"`
+	IncompleteCompletions int    `json:"incomplete_completions"`
 }
 
 type SessionAggregateReport struct {
@@ -43,9 +59,18 @@ func AggregateSessionStatsByAgentStore(store SessionStore, sessionDir string) (S
 		agg.SessionCount++
 		agg.SessionIDs = append(agg.SessionIDs, session.SessionID)
 		agg.Combined = combineSessionStats(agg.Combined, stats)
+		contributor := topContributingSession(session.AgentID, stats)
+		agg.TopInvalidSessions = append(agg.TopInvalidSessions, contributor)
+		agg.TopToolFailureSessions = append(agg.TopToolFailureSessions, contributor)
+		agg.TopRetryFailureSessions = append(agg.TopRetryFailureSessions, contributor)
+		agg.IncompleteSessions = append(agg.IncompleteSessions, contributor)
 		report.Agents[agentID] = agg
 	}
 	for agentID, agg := range report.Agents {
+		agg.TopInvalidSessions = topSessions(agg.TopInvalidSessions, func(item TopContributingSession) int { return item.InvalidOutputs })
+		agg.TopToolFailureSessions = topSessions(agg.TopToolFailureSessions, func(item TopContributingSession) int { return item.ToolFailures })
+		agg.TopRetryFailureSessions = topSessions(agg.TopRetryFailureSessions, func(item TopContributingSession) int { return item.UnrecoveredRetries })
+		agg.IncompleteSessions = topSessions(agg.IncompleteSessions, func(item TopContributingSession) int { return item.IncompleteCompletions })
 		agg.CompletionRate = ratio(agg.Combined.Completion.Completed, agg.Combined.Completion.Total)
 		agg.InvalidRate = ratio(agg.Combined.Output.Invalid, agg.Combined.Output.Total)
 		agg.ToolFailureRate = ratio(agg.Combined.Tools.ExecutionFailures, agg.Combined.Tools.Executed)
@@ -58,6 +83,7 @@ func AggregateSessionStatsByAgentStore(store SessionStore, sessionDir string) (S
 func combineSessionStats(a, b SessionStats) SessionStats {
 	combined := SessionStats{
 		SessionID:      a.SessionID,
+		AgentID:        firstNonEmpty(a.AgentID, b.AgentID),
 		RecordCounts:   combineRecordCounts(a.RecordCounts, b.RecordCounts),
 		Output:         combineOutputStats(a.Output, b.Output),
 		Tools:          combineToolStats(a.Tools, b.Tools),
@@ -65,6 +91,8 @@ func combineSessionStats(a, b SessionStats) SessionStats {
 		Completion:     combineCompletionStats(a.Completion, b.Completion),
 		ByTool:         combinePerToolStats(a.ByTool, b.ByTool),
 		ByState:        combinePerStateStats(a.ByState, b.ByState),
+		ModelRefs:      combineCountMaps(a.ModelRefs, b.ModelRefs),
+		ProviderRefs:   combineCountMaps(a.ProviderRefs, b.ProviderRefs),
 		StopReasons:    combineCountMaps(a.StopReasons, b.StopReasons),
 		RetryByReason:  combineCountMaps(a.RetryByReason, b.RetryByReason),
 		OutputStatuses: combineCountMaps(a.OutputStatuses, b.OutputStatuses),
@@ -92,13 +120,19 @@ func combineRecordCounts(a, b RecordCounts) RecordCounts {
 
 func combineOutputStats(a, b OutputStats) OutputStats {
 	return OutputStats{
-		Total:              a.Total + b.Total,
-		Valid:              a.Valid + b.Valid,
-		Invalid:            a.Invalid + b.Invalid,
-		MissingRequired:    a.MissingRequired + b.MissingRequired,
-		WrongState:         a.WrongState + b.WrongState,
-		ByValidationStatus: combineCountMaps(a.ByValidationStatus, b.ByValidationStatus),
-		ByParseStatus:      combineCountMaps(a.ByParseStatus, b.ByParseStatus),
+		Total:                 a.Total + b.Total,
+		Valid:                 a.Valid + b.Valid,
+		Invalid:               a.Invalid + b.Invalid,
+		MissingRequired:       a.MissingRequired + b.MissingRequired,
+		WrongState:            a.WrongState + b.WrongState,
+		ByValidationStatus:    combineCountMaps(a.ByValidationStatus, b.ByValidationStatus),
+		ByParseStatus:         combineCountMaps(a.ByParseStatus, b.ByParseStatus),
+		BySchema:              combineCountMaps(a.BySchema, b.BySchema),
+		ByActionType:          combineCountMaps(a.ByActionType, b.ByActionType),
+		ByTool:                combineCountMaps(a.ByTool, b.ByTool),
+		MissingFieldCounts:    combineCountMaps(a.MissingFieldCounts, b.MissingFieldCounts),
+		CompletionSignalTrue:  a.CompletionSignalTrue + b.CompletionSignalTrue,
+		CompletionSignalFalse: a.CompletionSignalFalse + b.CompletionSignalFalse,
 	}
 }
 
@@ -120,6 +154,11 @@ func combineRetryStats(a, b RetryStats) RetryStats {
 		Recovered:   a.Recovered + b.Recovered,
 		Unrecovered: a.Unrecovered + b.Unrecovered,
 		ByReason:    combineCountMaps(a.ByReason, b.ByReason),
+		Attribution: RetryAttributionStats{
+			ByCauseKind: combineCountMaps(a.Attribution.ByCauseKind, b.Attribution.ByCauseKind),
+			ByTool:      combineCountMaps(a.Attribution.ByTool, b.Attribution.ByTool),
+			ByState:     combineCountMaps(a.Attribution.ByState, b.Attribution.ByState),
+		},
 	}
 }
 
@@ -132,9 +171,15 @@ func combineCompletionStats(a, b CompletionStats) CompletionStats {
 	if stringsTrimNonEmpty(b.LatestStopReason) {
 		result.LatestStopReason = b.LatestStopReason
 		result.LatestCompleted = b.LatestCompleted
+		result.LatestIteration = b.LatestIteration
+		result.LatestCognitiveState = b.LatestCognitiveState
+		result.LatestWorkflowState = b.LatestWorkflowState
 	} else {
 		result.LatestStopReason = a.LatestStopReason
 		result.LatestCompleted = a.LatestCompleted
+		result.LatestIteration = a.LatestIteration
+		result.LatestCognitiveState = a.LatestCognitiveState
+		result.LatestWorkflowState = a.LatestWorkflowState
 	}
 	return result
 }
@@ -152,6 +197,8 @@ func combinePerToolStats(a, b map[string]PerToolStats) map[string]PerToolStats {
 		current.Executed += value.Executed
 		current.ExecutionSuccess += value.ExecutionSuccess
 		current.ExecutionFailures += value.ExecutionFailures
+		current.InvalidReasons = combineCountMaps(current.InvalidReasons, value.InvalidReasons)
+		current.MissingFieldCounts = combineCountMaps(current.MissingFieldCounts, value.MissingFieldCounts)
 		result[key] = current
 	}
 	return result
@@ -169,6 +216,9 @@ func combinePerStateStats(a, b map[string]PerStateStats) map[string]PerStateStat
 		current.Invalid += value.Invalid
 		current.MissingRequired += value.MissingRequired
 		current.WrongState += value.WrongState
+		current.ByValidationStatus = combineCountMaps(current.ByValidationStatus, value.ByValidationStatus)
+		current.ByParseStatus = combineCountMaps(current.ByParseStatus, value.ByParseStatus)
+		current.MissingFieldCounts = combineCountMaps(current.MissingFieldCounts, value.MissingFieldCounts)
 		result[key] = current
 	}
 	return result
@@ -194,4 +244,45 @@ func ratio(numerator, denominator int) float64 {
 
 func stringsTrimNonEmpty(value string) bool {
 	return strings.TrimSpace(value) != ""
+}
+
+func topContributingSession(agentID string, stats SessionStats) TopContributingSession {
+	return TopContributingSession{
+		SessionID:             stats.SessionID,
+		AgentID:               agentID,
+		InvalidOutputs:        stats.Output.Invalid,
+		ToolFailures:          stats.Tools.ExecutionFailures,
+		UnrecoveredRetries:    stats.Retry.Unrecovered,
+		IncompleteCompletions: stats.Completion.Incomplete,
+	}
+}
+
+func topSessions(items []TopContributingSession, score func(TopContributingSession) int) []TopContributingSession {
+	filtered := make([]TopContributingSession, 0, len(items))
+	for _, item := range items {
+		if score(item) > 0 {
+			filtered = append(filtered, item)
+		}
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		left := score(filtered[i])
+		right := score(filtered[j])
+		if left == right {
+			return filtered[i].SessionID < filtered[j].SessionID
+		}
+		return left > right
+	})
+	if len(filtered) > 5 {
+		return filtered[:5]
+	}
+	return filtered
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

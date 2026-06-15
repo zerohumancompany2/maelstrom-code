@@ -49,6 +49,15 @@ func TestAggregateSessionStatsByAgent(t *testing.T) {
 	if aggA.Combined.Completion.Completed != 1 || aggA.Combined.Completion.Incomplete != 1 {
 		t.Fatalf("agent-a completion stats = %+v", aggA.Combined.Completion)
 	}
+	if aggA.Combined.Output.MissingFieldCounts["summary"] != 1 {
+		t.Fatalf("agent-a missing field counts = %+v", aggA.Combined.Output.MissingFieldCounts)
+	}
+	if len(aggA.TopInvalidSessions) != 1 || aggA.TopInvalidSessions[0].SessionID != "session-2" {
+		t.Fatalf("agent-a top invalid sessions = %+v", aggA.TopInvalidSessions)
+	}
+	if len(aggA.IncompleteSessions) != 1 || aggA.IncompleteSessions[0].SessionID != "session-2" {
+		t.Fatalf("agent-a incomplete sessions = %+v", aggA.IncompleteSessions)
+	}
 	aggB := report.Agents["agent-b"]
 	if aggB.SessionCount != 1 {
 		t.Fatalf("agent-b session count = %d, want 1", aggB.SessionCount)
@@ -58,5 +67,8 @@ func TestAggregateSessionStatsByAgent(t *testing.T) {
 	}
 	if aggB.RetryFailureRate != 1 {
 		t.Fatalf("agent-b retry failure rate = %f, want 1", aggB.RetryFailureRate)
+	}
+	if len(aggB.TopRetryFailureSessions) != 1 || aggB.TopRetryFailureSessions[0].SessionID != "session-3" {
+		t.Fatalf("agent-b retry contributors = %+v", aggB.TopRetryFailureSessions)
 	}
 }

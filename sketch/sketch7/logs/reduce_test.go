@@ -94,3 +94,72 @@ func TestReduceSessionStatsCountsFailures(t *testing.T) {
 		t.Fatalf("per-tool stats = %+v", stats.ByTool)
 	}
 }
+
+func TestReduceSessionStatsAttributesOutputToolRetryAndProvider(t *testing.T) {
+	history := NewSessionHistory("session-102")
+	history.AgentID = "agent-attribution"
+	history.Append(InferenceEnvelopeRecord{SessionBaseRecord: history.NextRecord("inference_envelope"), ModelRef: "model-a", ProviderRef: "provider-a"})
+	history.Append(CognitiveTransitionRecord{SessionBaseRecord: history.NextRecord("cognitive_transition"), FromState: "observe", ToState: "act", Trigger: "begin"})
+	history.Append(WorkflowTransitionRefRecord{SessionBaseRecord: history.NextRecord("workflow_transition_ref"), FromState: "planning", ToState: "implementing", Trigger: "start"})
+	output := OutputContractEvaluationRecord{
+		SessionBaseRecord: history.NextRecord("output_contract_evaluation"),
+		StateName:         "act",
+		SchemaName:        "coding_step_v1",
+		ParseStatus:       "valid_json",
+		ValidationStatus:  "missing_required_fields",
+		MissingFields:     []string{"summary"},
+		ActionType:        "tool",
+		ToolName:          "replace_text",
+		CompletionSignal:  false,
+	}
+	history.Append(output)
+	validation := ToolValidationRecord{
+		SessionBaseRecord: history.NextRecord("tool_validation"),
+		CallID:            "call-3",
+		ToolName:          "replace_text",
+		Valid:             false,
+		Reason:            "missing_required_arguments",
+		MissingFields:     []string{"old_text"},
+	}
+	history.Append(validation)
+	history.Append(RetryRecord{SessionBaseRecord: history.NextRecord("retry"), Reason: "missing_required_arguments", Attempt: 1, Recovered: false, DerivedFrom: []string{validation.RecordID()}})
+	history.Append(CompletionRecord{SessionBaseRecord: history.NextRecord("completion"), Completed: false, StopReason: "loop_guard", Iteration: 8})
+
+	stats := ReduceSessionStats(history)
+	if stats.AgentID != "agent-attribution" {
+		t.Fatalf("agent id = %q", stats.AgentID)
+	}
+	if stats.ModelRefs["model-a"] != 1 || stats.ProviderRefs["provider-a"] != 1 {
+		t.Fatalf("model/provider attribution missing: models=%+v providers=%+v", stats.ModelRefs, stats.ProviderRefs)
+	}
+	if stats.Output.BySchema["coding_step_v1"] != 1 || stats.Output.ByActionType["tool"] != 1 || stats.Output.ByTool["replace_text"] != 1 {
+		t.Fatalf("output attribution missing: %+v", stats.Output)
+	}
+	if stats.Output.MissingFieldCounts["summary"] != 1 || stats.ByState["act"].MissingFieldCounts["summary"] != 1 {
+		t.Fatalf("missing field attribution missing: output=%+v state=%+v", stats.Output.MissingFieldCounts, stats.ByState["act"].MissingFieldCounts)
+	}
+	if stats.ByTool["replace_text"].InvalidReasons["missing_required_arguments"] != 1 || stats.ByTool["replace_text"].MissingFieldCounts["old_text"] != 1 {
+		t.Fatalf("tool attribution missing: %+v", stats.ByTool["replace_text"])
+	}
+	if stats.Retry.Attribution.ByCauseKind["tool_validation"] != 1 || stats.Retry.Attribution.ByTool["replace_text"] != 1 {
+		t.Fatalf("retry attribution missing: %+v", stats.Retry.Attribution)
+	}
+	if stats.Completion.LatestCognitiveState != "act" || stats.Completion.LatestWorkflowState != "implementing" || stats.Completion.LatestIteration != 8 {
+		t.Fatalf("completion attribution missing: %+v", stats.Completion)
+	}
+}
+
+func TestReduceSessionStatsAttributesRetryFromOutputRecord(t *testing.T) {
+	history := NewSessionHistory("session-103")
+	output := OutputContractEvaluationRecord{SessionBaseRecord: history.NextRecord("output_contract_evaluation"), StateName: "observe", ToolName: "read_file", ValidationStatus: "missing_schema_output"}
+	history.Append(output)
+	history.Append(RetryRecord{SessionBaseRecord: history.NextRecord("retry"), Reason: "missing_schema_output", Attempt: 1, Recovered: true, DerivedFrom: []string{output.RecordID()}})
+
+	stats := ReduceSessionStats(history)
+	if stats.Retry.Attribution.ByCauseKind["output_contract_evaluation"] != 1 {
+		t.Fatalf("retry cause attribution = %+v", stats.Retry.Attribution.ByCauseKind)
+	}
+	if stats.Retry.Attribution.ByState["observe"] != 1 || stats.Retry.Attribution.ByTool["read_file"] != 1 {
+		t.Fatalf("retry state/tool attribution = %+v", stats.Retry.Attribution)
+	}
+}
