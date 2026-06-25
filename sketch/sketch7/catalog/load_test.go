@@ -85,6 +85,18 @@ func TestLoadAgentRejectsInvalidProjectionPolicyFields(t *testing.T) {
 	}
 }
 
+func TestLoadAgentParsesStateBounds(t *testing.T) {
+	raw := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: bounded-agent\nmodel: glm-4.5-air\ncontext:\n  inputBudget: 1000\n  projections: []\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      bounds:\n        maxInferenceTurns: 3\n        maxToolCalls: 6\n        maxWallTimeSeconds: 120\n        maxFinalizationRetries: 1\n  transitions: []\n")
+	def, err := LoadAgent(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	bounds := def.Cognitive.States[0].Bounds
+	if bounds.MaxInferenceTurns != 3 || bounds.MaxToolCalls != 6 || bounds.MaxWallTimeSeconds != 120 || bounds.MaxFinalizationRetries != 1 {
+		t.Fatalf("Bounds = %+v, want all configured values", bounds)
+	}
+}
+
 func TestLoadWorkflowParsesDefinition(t *testing.T) {
 	raw := []byte("apiVersion: maelstrom/v1\nkind: Workflow\nname: conversation-to-execution\ndescription: Chat through implementation\ncontext: Build carefully.\nstatechart:\n  initialState: chatting\n  states:\n    - name: chatting\n    - name: planning\n  transitions:\n    - trigger: commit_plan\n      from: chatting\n      to: planning\n")
 	def, err := LoadWorkflow(raw)

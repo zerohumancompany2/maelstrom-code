@@ -103,6 +103,14 @@ type stateDocument struct {
 	Inputs          stateInputDocument      `yaml:"inputs"`
 	Outputs         stateOutputDocument     `yaml:"outputs"`
 	Completion      stateCompletionDocument `yaml:"completion"`
+	Bounds          stateBoundsDocument     `yaml:"bounds"`
+}
+
+type stateBoundsDocument struct {
+	MaxInferenceTurns      int `yaml:"maxInferenceTurns"`
+	MaxToolCalls           int `yaml:"maxToolCalls"`
+	MaxWallTimeSeconds     int `yaml:"maxWallTimeSeconds"`
+	MaxFinalizationRetries int `yaml:"maxFinalizationRetries"`
 }
 
 type stateInputDocument struct {
@@ -318,6 +326,12 @@ func toStatechartDefinition(doc statechartDocument) defs.StatechartDefinition {
 			},
 			Completion: defs.StateCompletionContract{
 				SuccessWhen: append([]string(nil), state.Completion.SuccessWhen...),
+			},
+			Bounds: defs.StateBoundsContract{
+				MaxInferenceTurns:      state.Bounds.MaxInferenceTurns,
+				MaxToolCalls:           state.Bounds.MaxToolCalls,
+				MaxWallTimeSeconds:     state.Bounds.MaxWallTimeSeconds,
+				MaxFinalizationRetries: state.Bounds.MaxFinalizationRetries,
 			},
 		})
 	}

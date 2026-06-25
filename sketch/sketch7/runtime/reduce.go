@@ -48,7 +48,7 @@ func ReduceWorkflowState(history *logs.WorkflowHistory, def defs.WorkflowDefinit
 		}
 	}
 	view.VisibleTools, view.EnabledTools = toolPolicyForState(def.Statechart, view.CurrentState)
-	view.Inputs, view.Outputs, view.Completion = stateContractsForState(def.Statechart, view.CurrentState)
+	view.Inputs, view.Outputs, view.Completion, view.Bounds = stateContractsForState(def.Statechart, view.CurrentState)
 	return view
 }
 
@@ -101,6 +101,12 @@ func cognitiveViewForState(chart defs.StatechartDefinition, name string) Cogniti
 			Completion: defs.StateCompletionContract{
 				SuccessWhen: append([]string(nil), state.Completion.SuccessWhen...),
 			},
+			Bounds: defs.StateBoundsContract{
+				MaxInferenceTurns:      state.Bounds.MaxInferenceTurns,
+				MaxToolCalls:           state.Bounds.MaxToolCalls,
+				MaxWallTimeSeconds:     state.Bounds.MaxWallTimeSeconds,
+				MaxFinalizationRetries: state.Bounds.MaxFinalizationRetries,
+			},
 		}
 	}
 	return CognitiveView{CurrentState: name}
@@ -116,7 +122,7 @@ func toolPolicyForState(chart defs.StatechartDefinition, name string) ([]string,
 	return nil, nil
 }
 
-func stateContractsForState(chart defs.StatechartDefinition, name string) (defs.StateInputContract, defs.StateOutputContract, defs.StateCompletionContract) {
+func stateContractsForState(chart defs.StatechartDefinition, name string) (defs.StateInputContract, defs.StateOutputContract, defs.StateCompletionContract, defs.StateBoundsContract) {
 	for _, state := range chart.States {
 		if state.Name != name {
 			continue
@@ -130,7 +136,12 @@ func stateContractsForState(chart defs.StatechartDefinition, name string) (defs.
 				Strict:         state.Outputs.Strict,
 			}, defs.StateCompletionContract{
 				SuccessWhen: append([]string(nil), state.Completion.SuccessWhen...),
+			}, defs.StateBoundsContract{
+				MaxInferenceTurns:      state.Bounds.MaxInferenceTurns,
+				MaxToolCalls:           state.Bounds.MaxToolCalls,
+				MaxWallTimeSeconds:     state.Bounds.MaxWallTimeSeconds,
+				MaxFinalizationRetries: state.Bounds.MaxFinalizationRetries,
 			}
 	}
-	return defs.StateInputContract{}, defs.StateOutputContract{}, defs.StateCompletionContract{}
+	return defs.StateInputContract{}, defs.StateOutputContract{}, defs.StateCompletionContract{}, defs.StateBoundsContract{}
 }

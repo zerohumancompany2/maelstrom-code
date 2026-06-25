@@ -69,6 +69,7 @@ func TestBuildSectionsStateTaskRendersTaskFacingGuidance(t *testing.T) {
 			EnabledTools: []string{"read_file", "run_command"},
 			Inputs:       defs.StateInputContract{Required: []string{"task_statement"}, Optional: []string{"repo_context"}},
 			Outputs:      defs.StateOutputContract{SchemaName: "cognitive_step_v1", RequiredFields: []string{"summary", "completion_signal"}},
+			Bounds:       defs.StateBoundsContract{MaxInferenceTurns: 3, MaxToolCalls: 6, MaxFinalizationRetries: 1},
 		},
 		Workflow: &runtime.WorkflowView{
 			WorkflowID:   "wf-001",
@@ -103,6 +104,9 @@ func TestBuildSectionsStateTaskRendersTaskFacingGuidance(t *testing.T) {
 	}
 	if !strings.Contains(content, "Required inputs: task_statement") {
 		t.Fatalf("content = %q, want cognitive input expectations", content)
+	}
+	if !strings.Contains(content, "Task bounds: max inference turns=3; max tool calls=6; max finalization retries=1") {
+		t.Fatalf("content = %q, want cognitive bounds", content)
 	}
 	for _, forbidden := range []string{"Cognitive mode", "Workflow directive", "Suggested next transitions"} {
 		if strings.Contains(content, forbidden) {

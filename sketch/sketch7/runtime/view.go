@@ -31,6 +31,7 @@ type CognitiveView struct {
 	Inputs       defs.StateInputContract
 	Outputs      defs.StateOutputContract
 	Completion   defs.StateCompletionContract
+	Bounds       defs.StateBoundsContract
 }
 
 type WorkflowView struct {
@@ -44,6 +45,7 @@ type WorkflowView struct {
 	Inputs         defs.StateInputContract
 	Outputs        defs.StateOutputContract
 	Completion     defs.StateCompletionContract
+	Bounds         defs.StateBoundsContract
 }
 
 type BindingView struct {

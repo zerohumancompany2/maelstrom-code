@@ -28,6 +28,27 @@ func TestReduceCognitiveStateUsesInitialStateWhenHistoryEmpty(t *testing.T) {
 	}
 }
 
+func TestReduceCognitiveStateCarriesBounds(t *testing.T) {
+	history := logs.NewSessionHistory("session-bounds-cognitive")
+	chart := defs.StatechartDefinition{
+		InitialState: "observe",
+		States: []defs.StateDefinition{{
+			Name: "observe",
+			Bounds: defs.StateBoundsContract{
+				MaxInferenceTurns:      3,
+				MaxToolCalls:           6,
+				MaxWallTimeSeconds:     120,
+				MaxFinalizationRetries: 1,
+			},
+		}},
+	}
+
+	view := ReduceCognitiveState(history, chart.InitialState, chart)
+	if view.Bounds.MaxInferenceTurns != 3 || view.Bounds.MaxToolCalls != 6 || view.Bounds.MaxWallTimeSeconds != 120 || view.Bounds.MaxFinalizationRetries != 1 {
+		t.Fatalf("Bounds = %+v, want configured bounds", view.Bounds)
+	}
+}
+
 func TestReduceCognitiveStateUsesLatestTransition(t *testing.T) {
 	history := logs.NewSessionHistory("session-002")
 	history.Append(logs.CognitiveTransitionRecord{
@@ -81,6 +102,27 @@ func TestReduceWorkflowStateUsesInitialStateWhenHistoryEmpty(t *testing.T) {
 	}
 	if len(view.EnabledTools) != 1 || view.EnabledTools[0] != "bind_workflow" {
 		t.Fatalf("EnabledTools = %v, want [bind_workflow]", view.EnabledTools)
+	}
+}
+
+func TestReduceWorkflowStateCarriesBounds(t *testing.T) {
+	history := logs.NewWorkflowHistory("workflow-bounds")
+	def := defs.WorkflowDefinition{Statechart: defs.StatechartDefinition{
+		InitialState: "validating",
+		States: []defs.StateDefinition{{
+			Name: "validating",
+			Bounds: defs.StateBoundsContract{
+				MaxInferenceTurns:      2,
+				MaxToolCalls:           4,
+				MaxWallTimeSeconds:     90,
+				MaxFinalizationRetries: 2,
+			},
+		}},
+	}}
+
+	view := ReduceWorkflowState(history, def, "builder")
+	if view.Bounds.MaxInferenceTurns != 2 || view.Bounds.MaxToolCalls != 4 || view.Bounds.MaxWallTimeSeconds != 90 || view.Bounds.MaxFinalizationRetries != 2 {
+		t.Fatalf("Bounds = %+v, want configured workflow bounds", view.Bounds)
 	}
 }
 

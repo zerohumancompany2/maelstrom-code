@@ -61,6 +61,9 @@ func formatStateTask(session runtime.SessionView, _ *logs.SessionHistory) string
 	if strings.TrimSpace(session.Cognitive.Outputs.SchemaName) != "" || len(session.Cognitive.Outputs.RequiredFields) > 0 {
 		parts = append(parts, fmt.Sprintf("Required output schema: %s. Required fields: %s.", strings.TrimSpace(session.Cognitive.Outputs.SchemaName), joinList(session.Cognitive.Outputs.RequiredFields)))
 	}
+	if bounds := formatBounds("Task bounds", session.Cognitive.Bounds); bounds != "" {
+		parts = append(parts, bounds)
+	}
 
 	// Workflow context if bound
 	if session.Workflow != nil {
@@ -83,6 +86,9 @@ func formatStateTask(session runtime.SessionView, _ *logs.SessionHistory) string
 		if len(wf.Completion.SuccessWhen) > 0 {
 			parts = append(parts, fmt.Sprintf("Workflow completion conditions: %s", joinList(wf.Completion.SuccessWhen)))
 		}
+		if bounds := formatBounds("Workflow bounds", wf.Bounds); bounds != "" {
+			parts = append(parts, bounds)
+		}
 	}
 
 	// Input expectations from cognitive state
@@ -94,6 +100,26 @@ func formatStateTask(session runtime.SessionView, _ *logs.SessionHistory) string
 	}
 
 	return strings.Join(parts, " ")
+}
+
+func formatBounds(label string, bounds defs.StateBoundsContract) string {
+	items := []string{}
+	if bounds.MaxInferenceTurns > 0 {
+		items = append(items, fmt.Sprintf("max inference turns=%d", bounds.MaxInferenceTurns))
+	}
+	if bounds.MaxToolCalls > 0 {
+		items = append(items, fmt.Sprintf("max tool calls=%d", bounds.MaxToolCalls))
+	}
+	if bounds.MaxWallTimeSeconds > 0 {
+		items = append(items, fmt.Sprintf("max wall time seconds=%d", bounds.MaxWallTimeSeconds))
+	}
+	if bounds.MaxFinalizationRetries > 0 {
+		items = append(items, fmt.Sprintf("max finalization retries=%d", bounds.MaxFinalizationRetries))
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s: %s.", label, strings.Join(items, "; "))
 }
 
 func effectiveEnabledTools(session runtime.SessionView) []string {

@@ -29,6 +29,14 @@ type StateDefinition struct {
 	Inputs          StateInputContract
 	Outputs         StateOutputContract
 	Completion      StateCompletionContract
+	Bounds          StateBoundsContract
+}
+
+type StateBoundsContract struct {
+	MaxInferenceTurns      int
+	MaxToolCalls           int
+	MaxWallTimeSeconds     int
+	MaxFinalizationRetries int
 }
 
 type StateInputContract struct {
