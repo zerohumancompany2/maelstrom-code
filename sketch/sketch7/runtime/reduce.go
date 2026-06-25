@@ -5,6 +5,14 @@ import (
 	"github.com/comalice/inference_sketch/sketch/sketch7/logs"
 )
 
+// FinalizationMode indicates the current finalization state.
+type FinalizationMode struct {
+	IsFinalizing     bool
+	RequireCognitive bool
+	RequireWorkflow  bool
+	RetryAttempt     int
+}
+
 func ReduceCognitiveState(history *logs.SessionHistory, initialState string, chart defs.StatechartDefinition) CognitiveView {
 	current := initialState
 	if current == "" {
@@ -120,6 +128,40 @@ func toolPolicyForState(chart defs.StatechartDefinition, name string) ([]string,
 		return append([]string(nil), state.VisibleTools...), append([]string(nil), state.EnabledTools...)
 	}
 	return nil, nil
+}
+
+// IsCognitiveBoundHit checks if the cognitive state's maxInferenceTurns bound has been hit.
+// Returns true if the bound is exceeded and cognitive outputs are declared.
+func IsCognitiveBoundHit(view CognitiveView, history *logs.SessionHistory) bool {
+	if view.Bounds.MaxInferenceTurns <= 0 {
+		return false
+	}
+	// Check if cognitive outputs are declared (required for finalization mode)
+	if view.Outputs.SchemaName == "" && len(view.Outputs.RequiredFields) == 0 {
+		return false
+	}
+	turns := logs.CountInferenceTurnsSinceStateEnter(history, "cognitive")
+	return turns >= view.Bounds.MaxInferenceTurns
+}
+
+// ShouldFinalizeCognitive checks if we should enter cognitive finalization mode.
+func ShouldFinalizeCognitive(view CognitiveView, history *logs.SessionHistory) bool {
+	return IsCognitiveBoundHit(view, history)
+}
+
+// GetMaxFinalizationRetries returns the max finalization retries, defaulting to 1 if not set.
+func GetMaxFinalizationRetries(bounds defs.StateBoundsContract) int {
+	if bounds.MaxFinalizationRetries <= 0 {
+		return 1
+	}
+	return bounds.MaxFinalizationRetries
+}
+
+// HasFinalizationRetriesExceeded checks if finalization retries have been exhausted.
+func HasFinalizationRetriesExceeded(view CognitiveView, history *logs.SessionHistory) bool {
+	maxRetries := GetMaxFinalizationRetries(view.Bounds)
+	retries := logs.CountFinalizationRetriesSinceStateEnter(history, "cognitive")
+	return retries >= maxRetries
 }
 
 func stateContractsForState(chart defs.StatechartDefinition, name string) (defs.StateInputContract, defs.StateOutputContract, defs.StateCompletionContract, defs.StateBoundsContract) {

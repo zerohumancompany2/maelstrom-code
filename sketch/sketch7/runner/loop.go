@@ -22,14 +22,21 @@ type Loop struct {
 	StopToken   string
 }
 
+const hostVersion = "sketch7-dev"
+const outputParserVersion = "output-contract-v1"
+
 func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDef *defs.WorkflowDefinition, sessionHistory *logs.SessionHistory, workflowHistory *logs.WorkflowHistory) error {
 	assembler := prompt.Assembler{Projections: l.Projections}
 	contextBuilder := ctxpkg.Builder{MaxMessages: l.MaxHistory}
 	for iteration := 1; ; iteration++ {
 		view := BuildSessionView(agent, agentDef, workflowDef, sessionHistory, workflowHistory)
 		ensureStateEnterRecords(sessionHistory, view)
+		finalizingCognitive := runtime.ShouldFinalizeCognitive(view.Cognitive, sessionHistory)
 		payloadID := sessionHistory.NextBundleID()
 		inferencePayload := contextBuilder.Build(payloadID, ctxpkg.BuildSections(agentDef, view, sessionHistory, ctxpkg.RepoContextOptions{RootDir: ".", RefreshEveryTurns: 12, MaxFilesToInspect: 2000, MaxTopLevelEntries: 8, MaxExtensionsToShow: 5}), view, sessionHistory, workflowHistory)
+		if finalizingCognitive {
+			inferencePayload.Tools = nil
+		}
 		inferencePayload = persistContextSnapshots(sessionHistory, inferencePayload)
 		assembled, err := assembler.Assemble(prompt.Input{Payload: inferencePayload})
 		if err != nil {
@@ -37,7 +44,11 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 		}
 
 		payload := prompt.BuildPayload(agent, inferencePayload.PayloadID, sessionHistory.SessionID, assembled)
-		request, err := l.Provider.BuildRequest(agent, payload, toolDefinitions(l.Tools))
+		toolsForRequest := toolDefinitions(l.Tools)
+		if finalizingCognitive {
+			toolsForRequest = nil
+		}
+		request, err := l.Provider.BuildRequest(agent, payload, toolsForRequest)
 		if err != nil {
 			return err
 		}
@@ -49,6 +60,7 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 		}
 
 		hasToolCalls := false
+		var finalizationEval *logs.OutputContractEvaluationRecord
 		for _, output := range response.Outputs {
 			records, workflowRecords, err := l.consumeProviderOutput(view, sessionHistory, workflowHistory, output)
 			if err != nil {
@@ -60,10 +72,37 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 				if _, ok := record.(logs.ToolCallRequestRecord); ok {
 					hasToolCalls = true
 				}
+				if eval, ok := record.(logs.OutputContractEvaluationRecord); ok {
+					copy := eval
+					finalizationEval = &copy
+				}
 			}
 			for _, record := range workflowRecords {
 				workflowHistory.Append(record)
 			}
+		}
+
+		if finalizingCognitive {
+			if finalizationEval != nil && finalizationEval.ValidationStatus == "valid" {
+				sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: "completed", ParseRecordIDs: []string{finalizationEval.RecordID()}, CompletionAccepted: true})
+				sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: true, StopReason: "state_finalized", Iteration: iteration})
+				return nil
+			}
+			if logs.CountFinalizationRetriesSinceStateEnter(sessionHistory, "cognitive") < runtime.GetMaxFinalizationRetries(view.Cognitive.Bounds) {
+				derived := []string{}
+				if finalizationEval != nil {
+					derived = append(derived, finalizationEval.RecordID())
+				}
+				sessionHistory.Append(logs.RetryRecord{SessionBaseRecord: sessionHistory.NextRecord("retry"), Reason: "invalid_finalization_output", Attempt: logs.CountFinalizationRetriesSinceStateEnter(sessionHistory, "cognitive") + 1, Recovered: false, DerivedFrom: derived})
+				continue
+			}
+			parseIDs := []string{}
+			if finalizationEval != nil {
+				parseIDs = append(parseIDs, finalizationEval.RecordID())
+			}
+			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: "validation_failed", ParseRecordIDs: parseIDs})
+			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: "finalization_validation_failed", Iteration: iteration})
+			return fmt.Errorf("cognitive finalization failed validation")
 		}
 
 		if l.shouldStop(sessionHistory) {
@@ -205,12 +244,12 @@ func toolDefinitions(executor tools.Executor) []provider.ToolDefinition {
 func (l Loop) consumeProviderOutput(view runtime.SessionView, history *logs.SessionHistory, workflowHistory *logs.WorkflowHistory, output provider.Output) ([]logs.SessionRecord, []logs.WorkflowRecord, error) {
 	switch v := output.(type) {
 	case provider.AssistantOutput:
-		record := evaluateAssistantOutput(history, view.Cognitive, v)
-		records := []logs.SessionRecord{}
+		assistant := logs.AssistantMessageRecord{SessionBaseRecord: history.NextRecord("assistant"), Content: v.Content, Reasoning: v.Reasoning}
+		record := evaluateAssistantOutput(history, view.Cognitive, v, assistant.RecordID())
+		records := []logs.SessionRecord{assistant}
 		if record != nil {
 			records = append(records, *record)
 		}
-		records = append(records, logs.AssistantMessageRecord{SessionBaseRecord: history.NextRecord("assistant"), Content: v.Content, Reasoning: v.Reasoning})
 		return records, nil, nil
 	case provider.ToolRequestOutput:
 		validation := validateToolRequest(history, view, v.Call)
@@ -231,14 +270,18 @@ func (l Loop) consumeProviderOutput(view runtime.SessionView, history *logs.Sess
 	}
 }
 
-func evaluateAssistantOutput(history *logs.SessionHistory, view runtime.CognitiveView, output provider.AssistantOutput) *logs.OutputContractEvaluationRecord {
+func evaluateAssistantOutput(history *logs.SessionHistory, view runtime.CognitiveView, output provider.AssistantOutput, sourceRecordID string) *logs.OutputContractEvaluationRecord {
 	if strings.TrimSpace(view.Outputs.SchemaName) == "" && len(view.Outputs.RequiredFields) == 0 {
 		return nil
 	}
 	record := logs.OutputContractEvaluationRecord{
 		SessionBaseRecord: history.NextRecord("output_contract_evaluation"),
 		StateName:         view.CurrentState,
+		Chart:             "cognitive",
 		SchemaName:        view.Outputs.SchemaName,
+		SourceRecordID:    sourceRecordID,
+		HostVersion:       hostVersion,
+		ParserVersion:     outputParserVersion,
 		ParseStatus:       "plain_text",
 		ValidationStatus:  "missing_schema_output",
 		RequiredFields:    append([]string(nil), view.Outputs.RequiredFields...),

@@ -107,7 +107,11 @@ type InferenceEnvelopeRecord struct {
 type OutputContractEvaluationRecord struct {
 	SessionBaseRecord
 	StateName         string
+	Chart             string
 	SchemaName        string
+	SourceRecordID    string
+	HostVersion       string
+	ParserVersion     string
 	ParseStatus       string
 	ValidationStatus  string
 	RequiredFields    []string

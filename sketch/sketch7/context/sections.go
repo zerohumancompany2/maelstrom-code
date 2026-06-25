@@ -43,7 +43,7 @@ func BuildSections(agentDef defs.AgentDefinition, session runtime.SessionView, h
 	return sections
 }
 
-func formatStateTask(session runtime.SessionView, _ *logs.SessionHistory) string {
+func formatStateTask(session runtime.SessionView, history *logs.SessionHistory) string {
 	parts := []string{}
 
 	// Current task prompt from cognitive state
@@ -60,6 +60,10 @@ func formatStateTask(session runtime.SessionView, _ *logs.SessionHistory) string
 	// Output requirements if any
 	if strings.TrimSpace(session.Cognitive.Outputs.SchemaName) != "" || len(session.Cognitive.Outputs.RequiredFields) > 0 {
 		parts = append(parts, fmt.Sprintf("Required output schema: %s. Required fields: %s.", strings.TrimSpace(session.Cognitive.Outputs.SchemaName), joinList(session.Cognitive.Outputs.RequiredFields)))
+	}
+	if runtime.ShouldFinalizeCognitive(session.Cognitive, history) {
+		attempt := logs.CountFinalizationRetriesSinceStateEnter(history, "cognitive") + 1
+		parts = append(parts, fmt.Sprintf("Finalization mode: tool use is closed for this task. Return JSON only matching the required output schema. Finalization attempt: %d.", attempt))
 	}
 	if bounds := formatBounds("Task bounds", session.Cognitive.Bounds); bounds != "" {
 		parts = append(parts, bounds)

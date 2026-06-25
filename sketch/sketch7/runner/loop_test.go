@@ -261,6 +261,146 @@ func TestLoopRunAppendsInitialStateEnterRecords(t *testing.T) {
 	}
 }
 
+func TestLoopRunFinalizesCognitiveStateWhenInferenceBoundHit(t *testing.T) {
+	providerScript := &scriptedProvider{responses: []provider.Response{{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"summary":"done"}`}}}}}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.ReadFileTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file"}}
+	agentDef := boundedFinalizationAgentDef(1, 0)
+	sessionHistory := logs.NewSessionHistory("session-finalize-valid")
+	seedCognitiveBoundHit(sessionHistory)
+
+	if err := loop.Run(agent, agentDef, nil, sessionHistory, nil); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+	if len(providerScript.requests) != 1 {
+		t.Fatalf("got %d provider requests, want 1", len(providerScript.requests))
+	}
+	if len(providerScript.requests[0].Tools) != 0 {
+		t.Fatalf("finalization request exposed tools: %+v", providerScript.requests[0].Tools)
+	}
+	requestText := requestText(providerScript.requests[0])
+	if !strings.Contains(requestText, "Finalization mode: tool use is closed") {
+		t.Fatalf("request text = %q, want finalization instruction", requestText)
+	}
+	foundEval := false
+	foundExit := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.OutputContractEvaluationRecord:
+			if v.ValidationStatus == "valid" && v.SourceRecordID != "" && v.ParserVersion != "" && v.HostVersion != "" {
+				foundEval = true
+			}
+		case logs.StateExitRecord:
+			if v.Chart == "cognitive" && v.StateName == "observe" && v.Reason == "completed" && v.CompletionAccepted {
+				foundExit = true
+			}
+		}
+	}
+	if !foundEval || !foundExit {
+		t.Fatalf("expected valid eval and accepted state exit, got %#v", sessionHistory.Records)
+	}
+}
+
+func TestLoopRunRetriesInvalidFinalizationOnceByDefault(t *testing.T) {
+	providerScript := &scriptedProvider{responses: []provider.Response{
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `not json`}}},
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"summary":"recovered"}`}}},
+	}}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.ReadFileTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file"}}
+	agentDef := boundedFinalizationAgentDef(1, 0)
+	sessionHistory := logs.NewSessionHistory("session-finalize-retry")
+	seedCognitiveBoundHit(sessionHistory)
+
+	if err := loop.Run(agent, agentDef, nil, sessionHistory, nil); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+	if len(providerScript.requests) != 2 {
+		t.Fatalf("got %d provider requests, want 2", len(providerScript.requests))
+	}
+	for _, request := range providerScript.requests {
+		if len(request.Tools) != 0 {
+			t.Fatalf("finalization request exposed tools: %+v", request.Tools)
+		}
+	}
+	foundRetry := false
+	foundCompletion := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.RetryRecord:
+			if v.Reason == "invalid_finalization_output" && v.Attempt == 1 {
+				foundRetry = true
+			}
+		case logs.CompletionRecord:
+			if v.Completed && v.StopReason == "state_finalized" {
+				foundCompletion = true
+			}
+		}
+	}
+	if !foundRetry || !foundCompletion {
+		t.Fatalf("expected retry and state_finalized completion, got %#v", sessionHistory.Records)
+	}
+}
+
+func TestLoopRunFailsAfterFinalizationRetriesExhausted(t *testing.T) {
+	providerScript := &scriptedProvider{responses: []provider.Response{
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `not json`}}},
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `still not json`}}},
+	}}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := boundedFinalizationAgentDef(1, 1)
+	sessionHistory := logs.NewSessionHistory("session-finalize-fail")
+	seedCognitiveBoundHit(sessionHistory)
+
+	err := loop.Run(agent, agentDef, nil, sessionHistory, nil)
+	if err == nil || !strings.Contains(err.Error(), "cognitive finalization failed validation") {
+		t.Fatalf("error = %v, want finalization validation failure", err)
+	}
+	foundExit := false
+	foundCompletion := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.StateExitRecord:
+			if v.Chart == "cognitive" && v.Reason == "validation_failed" {
+				foundExit = true
+			}
+		case logs.CompletionRecord:
+			if !v.Completed && v.StopReason == "finalization_validation_failed" {
+				foundCompletion = true
+			}
+		}
+	}
+	if !foundExit || !foundCompletion {
+		t.Fatalf("expected validation failure exit and completion, got %#v", sessionHistory.Records)
+	}
+}
+
+func boundedFinalizationAgentDef(maxInferenceTurns, maxFinalizationRetries int) defs.AgentDefinition {
+	return defs.AgentDefinition{
+		Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}},
+		Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{
+			Name:    "observe",
+			Prompt:  "Return the task conclusion.",
+			Outputs: defs.StateOutputContract{SchemaName: "cognitive_step_v1", RequiredFields: []string{"summary"}},
+			Bounds:  defs.StateBoundsContract{MaxInferenceTurns: maxInferenceTurns, MaxFinalizationRetries: maxFinalizationRetries},
+		}}},
+	}
+}
+
+func seedCognitiveBoundHit(history *logs.SessionHistory) {
+	history.Append(logs.StateEnterRecord{SessionBaseRecord: history.NextRecord("state_enter"), Chart: "cognitive", StateName: "observe"})
+	history.Append(logs.InferenceEnvelopeRecord{SessionBaseRecord: history.NextRecord("inference_envelope"), PayloadID: "seed", ModelRef: "fake-model", ProviderRef: "fake"})
+}
+
+func requestText(request provider.Request) string {
+	parts := []string{}
+	for _, line := range request.Lines {
+		parts = append(parts, line.Content)
+	}
+	return strings.Join(parts, "\n")
+}
+
 func TestLoopRunRecordsOutputContractEvaluationForAssistantJSON(t *testing.T) {
 	fakeProvider := &provider.FakeProvider{Response: provider.Response{Outputs: []provider.Output{
 		provider.AssistantOutput{Content: `{"state":"act","action_type":"final","summary":"done","completion_signal":true,"final_response":"All done."}`},

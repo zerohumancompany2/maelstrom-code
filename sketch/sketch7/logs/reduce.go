@@ -325,6 +325,81 @@ func SortedMapKeys[T any](items map[string]T) []string {
 	return keys
 }
 
+// CountInferenceTurnsSinceStateEnter counts InferenceEnvelopeRecords since the latest StateEnterRecord for the given chart.
+// Returns 0 if no StateEnterRecord is found for the chart.
+func CountInferenceTurnsSinceStateEnter(history *SessionHistory, chart string) int {
+	if history == nil {
+		return 0
+	}
+	// Find the latest state enter record for this chart
+	enterIndex := -1
+	for i := len(history.Records) - 1; i >= 0; i-- {
+		enter, ok := history.Records[i].(StateEnterRecord)
+		if ok && enter.Chart == chart {
+			enterIndex = i
+			break
+		}
+		enterPtr, ok := history.Records[i].(*StateEnterRecord)
+		if ok && enterPtr.Chart == chart {
+			enterIndex = i
+			break
+		}
+	}
+	if enterIndex == -1 {
+		return 0
+	}
+	// Count inference envelopes after the state enter
+	count := 0
+	for i := enterIndex + 1; i < len(history.Records); i++ {
+		switch history.Records[i].(type) {
+		case InferenceEnvelopeRecord:
+			count++
+		case *InferenceEnvelopeRecord:
+			count++
+		}
+	}
+	return count
+}
+
+// CountFinalizationRetriesSinceStateEnter counts retry attempts for finalization failures since state enter.
+func CountFinalizationRetriesSinceStateEnter(history *SessionHistory, chart string) int {
+	if history == nil {
+		return 0
+	}
+	// Find the latest state enter record for this chart
+	enterIndex := -1
+	for i := len(history.Records) - 1; i >= 0; i-- {
+		enter, ok := history.Records[i].(StateEnterRecord)
+		if ok && enter.Chart == chart {
+			enterIndex = i
+			break
+		}
+		enterPtr, ok := history.Records[i].(*StateEnterRecord)
+		if ok && enterPtr.Chart == chart {
+			enterIndex = i
+			break
+		}
+	}
+	if enterIndex == -1 {
+		return 0
+	}
+	// Count retry records related to output contract evaluation failures
+	count := 0
+	for i := enterIndex + 1; i < len(history.Records); i++ {
+		switch v := history.Records[i].(type) {
+		case RetryRecord:
+			if v.Reason == "invalid_finalization_output" || v.Reason == "missing_required_fields" || v.Reason == "invalid_json" {
+				count++
+			}
+		case *RetryRecord:
+			if v.Reason == "invalid_finalization_output" || v.Reason == "missing_required_fields" || v.Reason == "invalid_json" {
+				count++
+			}
+		}
+	}
+	return count
+}
+
 func buildRecordIndex(history *SessionHistory) map[string]SessionRecord {
 	index := map[string]SessionRecord{}
 	if history == nil {
