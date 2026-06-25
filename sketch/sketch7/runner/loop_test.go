@@ -376,6 +376,38 @@ func TestLoopRunFailsAfterFinalizationRetriesExhausted(t *testing.T) {
 	}
 }
 
+func TestLoopRunFinalizationDoesNotExecuteReturnedToolRequest(t *testing.T) {
+	raw, _ := json.Marshal(map[string]string{"command": "echo should-not-run"})
+	providerScript := &scriptedProvider{responses: repeatedToolResponses("call-finalize-tool", "run_command", map[string]string{"command": "echo should-not-run"}, raw, 2)}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.RunCommandTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"run_command"}}
+	agentDef := boundedFinalizationAgentDef(1, 1)
+	sessionHistory := logs.NewSessionHistory("session-finalize-tool")
+	seedCognitiveBoundHit(sessionHistory)
+
+	err := loop.Run(agent, agentDef, nil, sessionHistory, nil)
+	if err == nil || !strings.Contains(err.Error(), "cognitive finalization failed validation") {
+		t.Fatalf("error = %v, want finalization validation failure", err)
+	}
+	foundRequest := false
+	foundResult := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.ToolCallRequestRecord:
+			if v.ToolName == "run_command" {
+				foundRequest = true
+			}
+		case logs.ToolCallResultRecord:
+			if v.ToolName == "run_command" {
+				foundResult = true
+			}
+		}
+	}
+	if !foundRequest || foundResult {
+		t.Fatalf("expected finalization tool request recorded without execution result, got %#v", sessionHistory.Records)
+	}
+}
+
 func boundedFinalizationAgentDef(maxInferenceTurns, maxFinalizationRetries int) defs.AgentDefinition {
 	return defs.AgentDefinition{
 		Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}},
@@ -399,6 +431,16 @@ func requestText(request provider.Request) string {
 		parts = append(parts, line.Content)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func repeatedToolResponses(callIDPrefix, toolName string, args map[string]string, raw []byte, count int) []provider.Response {
+	responses := make([]provider.Response, 0, count)
+	for i := 0; i < count; i++ {
+		responses = append(responses, provider.Response{Outputs: []provider.Output{
+			provider.ToolRequestOutput{Call: provider.ToolCall{CallID: fmt.Sprintf("%s-%d", callIDPrefix, i+1), ToolName: toolName, Arguments: args, RawArgs: raw}},
+		}})
+	}
+	return responses
 }
 
 func TestLoopRunRecordsOutputContractEvaluationForAssistantJSON(t *testing.T) {
@@ -494,6 +536,72 @@ func TestLoopRunRecordsToolValidationFailure(t *testing.T) {
 	}
 }
 
+func TestLoopRunRejectsCognitivelyDisabledToolWithoutExecution(t *testing.T) {
+	raw, _ := json.Marshal(map[string]string{"command": "echo should-not-run"})
+	providerScript := &scriptedProvider{responses: repeatedToolResponses("call-disabled-cognitive", "run_command", map[string]string{"command": "echo should-not-run"}, raw, 8)}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.RunCommandTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file", "run_command"}}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{Name: "observe", EnabledTools: []string{"read_file"}}}}}
+	sessionHistory := logs.NewSessionHistory("session-disabled-cognitive")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Try command."})
+
+	err := loop.Run(agent, agentDef, nil, sessionHistory, nil)
+	if err == nil || err.Error() != "loop guard tripped" {
+		t.Fatalf("error = %v, want loop guard after repeated disabled tool", err)
+	}
+	foundValidation := false
+	foundToolResult := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.ToolValidationRecord:
+			if v.ToolName == "run_command" && !v.Valid && v.Reason == "tool_not_enabled" {
+				foundValidation = true
+			}
+		case logs.ToolCallResultRecord:
+			if v.ToolName == "run_command" {
+				foundToolResult = true
+			}
+		}
+	}
+	if !foundValidation || foundToolResult {
+		t.Fatalf("expected disabled validation and no tool result, got %#v", sessionHistory.Records)
+	}
+}
+
+func TestLoopRunRejectsWorkflowDisabledToolWithoutExecution(t *testing.T) {
+	raw, _ := json.Marshal(map[string]string{"command": "echo should-not-run"})
+	providerScript := &scriptedProvider{responses: repeatedToolResponses("call-disabled-workflow", "run_command", map[string]string{"command": "echo should-not-run"}, raw, 8)}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.RunCommandTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file", "run_command"}}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{Name: "observe", EnabledTools: []string{"read_file", "run_command"}}}}}
+	workflowDef := defs.WorkflowDefinition{Statechart: defs.StatechartDefinition{InitialState: "planning", States: []defs.StateDefinition{{Name: "planning", EnabledTools: []string{"read_file"}}}}}
+	sessionHistory := logs.NewSessionHistory("session-disabled-workflow")
+	sessionHistory.Append(logs.SessionWorkflowBindingRecord{SessionBaseRecord: sessionHistory.NextRecord("workflow_binding_ref"), BindingID: "bind-disabled", WorkflowID: "workflow-disabled", Action: "bind"})
+	workflowHistory := logs.NewWorkflowHistory("workflow-disabled")
+
+	err := loop.Run(agent, agentDef, &workflowDef, sessionHistory, workflowHistory)
+	if err == nil || err.Error() != "loop guard tripped" {
+		t.Fatalf("error = %v, want loop guard after repeated disabled workflow tool", err)
+	}
+	foundValidation := false
+	foundToolResult := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.ToolValidationRecord:
+			if v.ToolName == "run_command" && !v.Valid && v.Reason == "tool_not_enabled" {
+				foundValidation = true
+			}
+		case logs.ToolCallResultRecord:
+			if v.ToolName == "run_command" {
+				foundToolResult = true
+			}
+		}
+	}
+	if !foundValidation || foundToolResult {
+		t.Fatalf("expected workflow disabled validation and no tool result, got %#v", sessionHistory.Records)
+	}
+}
+
 func TestLoopRunProcessesWorkflowTransitionWhenBound(t *testing.T) {
 	raw, _ := json.Marshal(map[string]string{"chart": "workflow", "trigger": "start_implementation"})
 	fakeProvider := &provider.FakeProvider{Response: provider.Response{Outputs: []provider.Output{
@@ -512,8 +620,9 @@ func TestLoopRunProcessesWorkflowTransitionWhenBound(t *testing.T) {
 		},
 		MaxHistory: 10,
 	}
-	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
-	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe"}}
+	enabledTools := []string{"transition_state"}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: enabledTools}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{Name: "observe", EnabledTools: enabledTools}}}}
 	workflowDef := defs.WorkflowDefinition{Description: "Conversation flow", Context: "Implement feature", Statechart: defs.StatechartDefinition{InitialState: "planning", States: []defs.StateDefinition{{Name: "planning"}, {Name: "implementing"}}}}
 	sessionHistory := logs.NewSessionHistory("session-004")
 	sessionHistory.Append(logs.SessionWorkflowBindingRecord{SessionBaseRecord: sessionHistory.NextRecord("workflow_binding_ref"), BindingID: "bind-004", WorkflowID: "workflow-004", Action: "bind"})
@@ -573,8 +682,8 @@ func TestLoopRunScriptedBindInterruptResumeFlow(t *testing.T) {
 		},
 		MaxHistory: 10,
 	}
-	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
-	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe"}}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"bind_workflow", "interrupt_session", "resume_session"}}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{Name: "observe", EnabledTools: []string{"bind_workflow", "interrupt_session", "resume_session"}}}}}
 	workflowDef := defs.WorkflowDefinition{Description: "Conversation flow", Context: "Implement feature", Statechart: defs.StatechartDefinition{InitialState: "chatting"}}
 	sessionHistory := logs.NewSessionHistory("session-010")
 	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Start working, but I may interrupt."})
@@ -653,8 +762,9 @@ func TestLoopRunReadEditValidateSummaryFlow(t *testing.T) {
 		},
 		MaxHistory: 10,
 	}
-	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
-	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe"}}
+	enabledTools := []string{"read_file", "replace_text", "run_command"}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: enabledTools}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{Name: "observe", EnabledTools: enabledTools}}}}
 	sessionHistory := logs.NewSessionHistory("session-020")
 	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Update sample.txt and confirm the contents."})
 
@@ -745,8 +855,9 @@ func (w *Worker) Execute() string {
 		},
 		MaxHistory: 20,
 	}
-	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
-	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe"}}
+	enabledTools := []string{"search_files", "get_file_skeleton", "read_file", "replace_text", "run_command"}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: enabledTools}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{Name: "observe", EnabledTools: enabledTools}}}}
 	sessionHistory := logs.NewSessionHistory("session-030")
 	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Find Execute and update its return value."})
 

@@ -62,7 +62,7 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 		hasToolCalls := false
 		var finalizationEval *logs.OutputContractEvaluationRecord
 		for _, output := range response.Outputs {
-			records, workflowRecords, err := l.consumeProviderOutput(view, sessionHistory, workflowHistory, output)
+			records, workflowRecords, err := l.consumeProviderOutput(view, sessionHistory, workflowHistory, output, finalizingCognitive)
 			if err != nil {
 				sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: "tool_execution_error", Iteration: iteration})
 				return err
@@ -241,7 +241,7 @@ func toolDefinitions(executor tools.Executor) []provider.ToolDefinition {
 	return converted
 }
 
-func (l Loop) consumeProviderOutput(view runtime.SessionView, history *logs.SessionHistory, workflowHistory *logs.WorkflowHistory, output provider.Output) ([]logs.SessionRecord, []logs.WorkflowRecord, error) {
+func (l Loop) consumeProviderOutput(view runtime.SessionView, history *logs.SessionHistory, workflowHistory *logs.WorkflowHistory, output provider.Output, finalizing bool) ([]logs.SessionRecord, []logs.WorkflowRecord, error) {
 	switch v := output.(type) {
 	case provider.AssistantOutput:
 		assistant := logs.AssistantMessageRecord{SessionBaseRecord: history.NextRecord("assistant"), Content: v.Content, Reasoning: v.Reasoning}
@@ -255,8 +255,15 @@ func (l Loop) consumeProviderOutput(view runtime.SessionView, history *logs.Sess
 		validation := validateToolRequest(history, view, v.Call)
 		requestRecord := logs.ToolCallRequestRecord{SessionBaseRecord: history.NextRecord("tool_call_request"), CallID: v.Call.CallID, ToolName: v.Call.ToolName, Arguments: string(v.Call.RawArgs)}
 		records := []logs.SessionRecord{validation, requestRecord}
-		if !validation.Valid && validation.Reason == "missing_required_arguments" {
-			return append(records, logs.RetryRecord{SessionBaseRecord: history.NextRecord("retry"), Reason: validation.Reason, Attempt: 1, Recovered: false, DerivedFrom: []string{validation.RecordID()}}), nil, nil
+		// Do not execute if finalizing (no-tools mode) or if tool is not enabled
+		if finalizing {
+			return records, nil, nil
+		}
+		if !validation.Valid {
+			if validation.Reason == "missing_required_arguments" {
+				return append(records, logs.RetryRecord{SessionBaseRecord: history.NextRecord("retry"), Reason: validation.Reason, Attempt: 1, Recovered: false, DerivedFrom: []string{validation.RecordID()}}), nil, nil
+			}
+			return records, nil, nil
 		}
 		result, err := l.Tools.Execute(tools.ExecutionRequest{Agent: view.Agent, Session: view, Call: v, History: history, Workflow: workflowHistory})
 		if err != nil {
@@ -332,10 +339,13 @@ func validateToolRequest(history *logs.SessionHistory, view runtime.SessionView,
 	missing := missingStringMapFields(call.Arguments, required)
 	allowedTools := effectiveAllowedTools(view)
 	knownTool := len(view.Agent.ToolNames) == 0 || contains(view.Agent.ToolNames, call.ToolName)
-	valid := knownTool && len(missing) == 0
+	enabledTool := len(allowedTools) == 0 || contains(allowedTools, call.ToolName)
+	valid := knownTool && enabledTool && len(missing) == 0
 	reason := ""
 	if !knownTool {
 		reason = "unknown_tool"
+	} else if !enabledTool {
+		reason = "tool_not_enabled"
 	} else if len(missing) > 0 {
 		reason = "missing_required_arguments"
 	}
@@ -353,13 +363,24 @@ func validateToolRequest(history *logs.SessionHistory, view runtime.SessionView,
 
 func effectiveAllowedTools(view runtime.SessionView) []string {
 	allowed := append([]string(nil), view.Agent.ToolNames...)
+	policyApplied := false
 	if len(view.Cognitive.EnabledTools) > 0 {
-		allowed = intersectPreservingOrder(allowed, view.Cognitive.EnabledTools)
+		policyApplied = true
+		if len(allowed) == 0 {
+			allowed = append([]string(nil), view.Cognitive.EnabledTools...)
+		} else {
+			allowed = intersectPreservingOrder(allowed, view.Cognitive.EnabledTools)
+		}
 	}
 	if view.Workflow != nil && len(view.Workflow.EnabledTools) > 0 {
-		allowed = intersectPreservingOrder(allowed, view.Workflow.EnabledTools)
+		policyApplied = true
+		if len(allowed) == 0 {
+			allowed = append([]string(nil), view.Workflow.EnabledTools...)
+		} else {
+			allowed = intersectPreservingOrder(allowed, view.Workflow.EnabledTools)
+		}
 	}
-	if len(allowed) == 0 {
+	if len(allowed) == 0 && !policyApplied {
 		return append([]string(nil), view.Agent.ToolNames...)
 	}
 	return allowed

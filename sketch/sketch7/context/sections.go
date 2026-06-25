@@ -128,13 +128,24 @@ func formatBounds(label string, bounds defs.StateBoundsContract) string {
 
 func effectiveEnabledTools(session runtime.SessionView) []string {
 	allowed := append([]string(nil), session.Agent.ToolNames...)
+	policyApplied := false
 	if len(session.Cognitive.EnabledTools) > 0 {
-		allowed = intersectPreservingOrder(allowed, session.Cognitive.EnabledTools)
+		policyApplied = true
+		if len(allowed) == 0 {
+			allowed = append([]string(nil), session.Cognitive.EnabledTools...)
+		} else {
+			allowed = intersectPreservingOrder(allowed, session.Cognitive.EnabledTools)
+		}
 	}
 	if session.Workflow != nil && len(session.Workflow.EnabledTools) > 0 {
-		allowed = intersectPreservingOrder(allowed, session.Workflow.EnabledTools)
+		policyApplied = true
+		if len(allowed) == 0 {
+			allowed = append([]string(nil), session.Workflow.EnabledTools...)
+		} else {
+			allowed = intersectPreservingOrder(allowed, session.Workflow.EnabledTools)
+		}
 	}
-	if len(allowed) == 0 {
+	if len(allowed) == 0 && !policyApplied {
 		return append([]string(nil), session.Agent.ToolNames...)
 	}
 	return allowed
