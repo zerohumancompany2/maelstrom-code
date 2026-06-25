@@ -145,6 +145,23 @@ type CompletionRecord struct {
 	Iteration  int
 }
 
+type StateEnterRecord struct {
+	SessionBaseRecord
+	Chart          string // cognitive | workflow
+	StateName      string
+	DerivedFromIDs []string
+}
+
+type StateExitRecord struct {
+	SessionBaseRecord
+	Chart              string // cognitive | workflow
+	StateName          string
+	Reason             string // completed | transition | max_turns | validation_failed | etc.
+	DerivedFromIDs     []string
+	ParseRecordIDs     []string
+	CompletionAccepted bool
+}
+
 type SessionHistory struct {
 	SessionID string
 	AgentID   string

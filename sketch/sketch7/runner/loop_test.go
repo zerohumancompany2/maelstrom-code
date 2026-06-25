@@ -225,6 +225,42 @@ func TestLoopRunPersistsAndIncludesStateTaskContextSnapshot(t *testing.T) {
 	}
 }
 
+func TestLoopRunAppendsInitialStateEnterRecords(t *testing.T) {
+	providerScript := &scriptedProvider{responses: []provider.Response{{Outputs: []provider.Output{provider.AssistantOutput{Content: "Done."}}}}}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := defs.AgentDefinition{
+		Context:   defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}},
+		Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{Name: "observe", Prompt: "Observe."}}},
+	}
+	workflowDef := defs.WorkflowDefinition{Statechart: defs.StatechartDefinition{InitialState: "intake", States: []defs.StateDefinition{{Name: "intake"}}}}
+	sessionHistory := logs.NewSessionHistory("session-state-enter")
+	sessionHistory.Append(logs.SessionWorkflowBindingRecord{SessionBaseRecord: sessionHistory.NextRecord("workflow_binding_ref"), BindingID: "bind-state-enter", WorkflowID: "workflow-state-enter", Action: "bind"})
+	workflowHistory := logs.NewWorkflowHistory("workflow-state-enter")
+
+	if err := loop.Run(agent, agentDef, &workflowDef, sessionHistory, workflowHistory); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+
+	foundCognitive := false
+	foundWorkflow := false
+	for _, record := range sessionHistory.Records {
+		enter, ok := record.(logs.StateEnterRecord)
+		if !ok {
+			continue
+		}
+		if enter.Chart == "cognitive" && enter.StateName == "observe" {
+			foundCognitive = true
+		}
+		if enter.Chart == "workflow" && enter.StateName == "intake" {
+			foundWorkflow = true
+		}
+	}
+	if !foundCognitive || !foundWorkflow {
+		t.Fatalf("expected cognitive and workflow enter records, got %#v", sessionHistory.Records)
+	}
+}
+
 func TestLoopRunRecordsOutputContractEvaluationForAssistantJSON(t *testing.T) {
 	fakeProvider := &provider.FakeProvider{Response: provider.Response{Outputs: []provider.Output{
 		provider.AssistantOutput{Content: `{"state":"act","action_type":"final","summary":"done","completion_signal":true,"final_response":"All done."}`},

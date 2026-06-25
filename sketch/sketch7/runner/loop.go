@@ -27,6 +27,7 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 	contextBuilder := ctxpkg.Builder{MaxMessages: l.MaxHistory}
 	for iteration := 1; ; iteration++ {
 		view := BuildSessionView(agent, agentDef, workflowDef, sessionHistory, workflowHistory)
+		ensureStateEnterRecords(sessionHistory, view)
 		payloadID := sessionHistory.NextBundleID()
 		inferencePayload := contextBuilder.Build(payloadID, ctxpkg.BuildSections(agentDef, view, sessionHistory, ctxpkg.RepoContextOptions{RootDir: ".", RefreshEveryTurns: 12, MaxFilesToInspect: 2000, MaxTopLevelEntries: 8, MaxExtensionsToShow: 5}), view, sessionHistory, workflowHistory)
 		inferencePayload = persistContextSnapshots(sessionHistory, inferencePayload)
@@ -78,6 +79,48 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 			return fmt.Errorf("loop guard tripped")
 		}
 	}
+}
+
+func ensureStateEnterRecords(history *logs.SessionHistory, view runtime.SessionView) {
+	if history == nil {
+		return
+	}
+	ensureStateEnterRecord(history, "cognitive", view.Cognitive.CurrentState)
+	if view.Workflow != nil {
+		ensureStateEnterRecord(history, "workflow", view.Workflow.CurrentState)
+	}
+}
+
+func ensureStateEnterRecord(history *logs.SessionHistory, chart, stateName string) {
+	if strings.TrimSpace(chart) == "" || strings.TrimSpace(stateName) == "" {
+		return
+	}
+	for i := len(history.Records) - 1; i >= 0; i-- {
+		record := history.Records[i]
+		enter, ok := record.(logs.StateEnterRecord)
+		if ok && enter.Chart == chart {
+			if enter.StateName == stateName {
+				return
+			}
+			break
+		}
+		enterPtr, ok := record.(*logs.StateEnterRecord)
+		if ok && enterPtr.Chart == chart {
+			if enterPtr.StateName == stateName {
+				return
+			}
+			break
+		}
+		exit, ok := record.(logs.StateExitRecord)
+		if ok && exit.Chart == chart {
+			break
+		}
+		exitPtr, ok := record.(*logs.StateExitRecord)
+		if ok && exitPtr.Chart == chart {
+			break
+		}
+	}
+	history.Append(logs.StateEnterRecord{SessionBaseRecord: history.NextRecord("state_enter"), Chart: chart, StateName: stateName})
 }
 
 func (l Loop) shouldStop(history *logs.SessionHistory) bool {

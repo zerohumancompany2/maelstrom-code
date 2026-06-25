@@ -29,8 +29,8 @@ func TestRegistryExecutesRegisteredTool(t *testing.T) {
 	if result.ToolName != "transition_state" {
 		t.Fatalf("ToolName = %q, want transition_state", result.ToolName)
 	}
-	if len(result.SessionRecords) != 1 {
-		t.Fatalf("got %d session records, want 1", len(result.SessionRecords))
+	if len(result.SessionRecords) != 3 {
+		t.Fatalf("got %d session records, want 3", len(result.SessionRecords))
 	}
 }
 
@@ -53,12 +53,26 @@ func TestTransitionToolTransitionsAgentState(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("expected non-error result, got %+v", result)
 	}
-	transition, ok := result.SessionRecords[0].(logs.CognitiveTransitionRecord)
+	exit, ok := result.SessionRecords[0].(logs.StateExitRecord)
 	if !ok {
-		t.Fatalf("record is %T, want CognitiveTransitionRecord", result.SessionRecords[0])
+		t.Fatalf("first record is %T, want StateExitRecord", result.SessionRecords[0])
+	}
+	if exit.Chart != "cognitive" || exit.StateName != "observe" || exit.Reason != "transition" {
+		t.Fatalf("exit record = %+v, want cognitive observe transition exit", exit)
+	}
+	transition, ok := result.SessionRecords[1].(logs.CognitiveTransitionRecord)
+	if !ok {
+		t.Fatalf("second record is %T, want CognitiveTransitionRecord", result.SessionRecords[1])
 	}
 	if transition.ToState != "act" {
 		t.Fatalf("ToState = %q, want act", transition.ToState)
+	}
+	enter, ok := result.SessionRecords[2].(logs.StateEnterRecord)
+	if !ok {
+		t.Fatalf("third record is %T, want StateEnterRecord", result.SessionRecords[2])
+	}
+	if enter.Chart != "cognitive" || enter.StateName != "act" {
+		t.Fatalf("enter record = %+v, want cognitive act enter", enter)
 	}
 }
 
@@ -81,15 +95,22 @@ func TestTransitionToolTransitionsWorkflowState(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("expected non-error result, got %+v", result)
 	}
-	if len(result.SessionRecords) != 1 {
-		t.Fatalf("got %d session records, want 1", len(result.SessionRecords))
+	if len(result.SessionRecords) != 3 {
+		t.Fatalf("got %d session records, want 3", len(result.SessionRecords))
 	}
 	if len(result.WorkflowRecords) != 1 {
 		t.Fatalf("got %d workflow records, want 1", len(result.WorkflowRecords))
 	}
-	sessionRef, ok := result.SessionRecords[0].(logs.WorkflowTransitionRefRecord)
+	exit, ok := result.SessionRecords[0].(logs.StateExitRecord)
 	if !ok {
-		t.Fatalf("session record is %T, want WorkflowTransitionRefRecord", result.SessionRecords[0])
+		t.Fatalf("first session record is %T, want StateExitRecord", result.SessionRecords[0])
+	}
+	if exit.Chart != "workflow" || exit.StateName != "planning" || exit.Reason != "transition" {
+		t.Fatalf("exit record = %+v, want workflow planning transition exit", exit)
+	}
+	sessionRef, ok := result.SessionRecords[1].(logs.WorkflowTransitionRefRecord)
+	if !ok {
+		t.Fatalf("second session record is %T, want WorkflowTransitionRefRecord", result.SessionRecords[1])
 	}
 	if sessionRef.ToState != "implementing" {
 		t.Fatalf("session ref ToState = %q, want implementing", sessionRef.ToState)
@@ -103,6 +124,13 @@ func TestTransitionToolTransitionsWorkflowState(t *testing.T) {
 	}
 	if sessionRef.WorkflowRecordID != transition.RecordID() {
 		t.Fatalf("WorkflowRecordID = %q, want %q", sessionRef.WorkflowRecordID, transition.RecordID())
+	}
+	enter, ok := result.SessionRecords[2].(logs.StateEnterRecord)
+	if !ok {
+		t.Fatalf("third session record is %T, want StateEnterRecord", result.SessionRecords[2])
+	}
+	if enter.Chart != "workflow" || enter.StateName != "implementing" {
+		t.Fatalf("enter record = %+v, want workflow implementing enter", enter)
 	}
 }
 

@@ -37,6 +37,13 @@ func (t TransitionTool) Execute(request ExecutionRequest) (ExecutionResult, erro
 		if fromState == "" {
 			fromState = t.AgentChart.InitialState()
 		}
+		exitRecord := logs.StateExitRecord{
+			SessionBaseRecord: request.History.NextRecord("state_exit"),
+			Chart:             "cognitive",
+			StateName:         fromState,
+			Reason:            "transition",
+			DerivedFromIDs:    []string{request.Call.Call.CallID},
+		}
 		transition := logs.CognitiveTransitionRecord{
 			SessionBaseRecord: request.History.NextRecord("cognitive_transition"),
 			FromState:         fromState,
@@ -44,10 +51,16 @@ func (t TransitionTool) Execute(request ExecutionRequest) (ExecutionResult, erro
 			Trigger:           trigger,
 			DerivedFromIDs:    []string{request.Call.Call.CallID},
 		}
+		enterRecord := logs.StateEnterRecord{
+			SessionBaseRecord: request.History.NextRecord("state_enter"),
+			Chart:             "cognitive",
+			StateName:         toState,
+			DerivedFromIDs:    []string{request.Call.Call.CallID},
+		}
 		return ExecutionResult{
 			ToolName:       "transition_state",
 			DisplayContent: fmt.Sprintf("transitioned agent: %s -> %s via %s", fromState, toState, trigger),
-			SessionRecords: []logs.SessionRecord{transition},
+			SessionRecords: []logs.SessionRecord{exitRecord, transition, enterRecord},
 		}, nil
 	case "workflow":
 		if request.Session.Workflow == nil || request.Workflow == nil {
@@ -61,12 +74,25 @@ func (t TransitionTool) Execute(request ExecutionRequest) (ExecutionResult, erro
 		if fromState == "" {
 			fromState = t.WorkflowChart.InitialState()
 		}
+		exitRecord := logs.StateExitRecord{
+			SessionBaseRecord: request.History.NextRecord("state_exit"),
+			Chart:             "workflow",
+			StateName:         fromState,
+			Reason:            "transition",
+			DerivedFromIDs:    []string{request.Call.Call.CallID},
+		}
 		workflowTransition := logs.WorkflowTransitionRecord{
 			WorkflowBaseRecord: request.Workflow.NextRecord("workflow_transition"),
 			FromState:          fromState,
 			ToState:            toState,
 			Trigger:            trigger,
 			DerivedFromIDs:     []string{request.Call.Call.CallID},
+		}
+		enterRecord := logs.StateEnterRecord{
+			SessionBaseRecord: request.History.NextRecord("state_enter"),
+			Chart:             "workflow",
+			StateName:         toState,
+			DerivedFromIDs:    []string{request.Call.Call.CallID},
 		}
 		sessionTransition := logs.WorkflowTransitionRefRecord{
 			SessionBaseRecord: request.History.NextRecord("workflow_transition_ref"),
@@ -80,7 +106,7 @@ func (t TransitionTool) Execute(request ExecutionRequest) (ExecutionResult, erro
 		return ExecutionResult{
 			ToolName:        "transition_state",
 			DisplayContent:  fmt.Sprintf("transitioned workflow: %s -> %s via %s", fromState, toState, trigger),
-			SessionRecords:  []logs.SessionRecord{sessionTransition},
+			SessionRecords:  []logs.SessionRecord{exitRecord, sessionTransition, enterRecord},
 			WorkflowRecords: []logs.WorkflowRecord{workflowTransition},
 		}, nil
 	default:

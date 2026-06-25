@@ -9,7 +9,9 @@ func TestSaveAndLoadStateRoundTrips(t *testing.T) {
 	session := NewSessionHistory("session-persist-001")
 	session.AgentID = "agent-persist"
 	session.Append(UserMessageRecord{SessionBaseRecord: session.NextRecord("user"), Content: "hello"})
+	session.Append(StateEnterRecord{SessionBaseRecord: session.NextRecord("state_enter"), Chart: "cognitive", StateName: "observe"})
 	session.Append(AssistantMessageRecord{SessionBaseRecord: session.NextRecord("assistant"), Content: "hi"})
+	session.Append(StateExitRecord{SessionBaseRecord: session.NextRecord("state_exit"), Chart: "cognitive", StateName: "observe", Reason: "completed", CompletionAccepted: true})
 	session.NextBundleID()
 	workflow := NewWorkflowHistory("workflow-persist-001")
 	workflow.Append(WorkflowTransitionRecord{WorkflowBaseRecord: workflow.NextRecord("workflow_transition"), FromState: "planning", ToState: "implementing", Trigger: "start"})
@@ -30,6 +32,12 @@ func TestSaveAndLoadStateRoundTrips(t *testing.T) {
 	}
 	if loadedSession.bundles != 1 {
 		t.Fatalf("loaded bundles = %d, want 1", loadedSession.bundles)
+	}
+	if _, ok := loadedSession.Records[1].(*StateEnterRecord); !ok {
+		t.Fatalf("record[1] = %T, want *StateEnterRecord", loadedSession.Records[1])
+	}
+	if exit, ok := loadedSession.Records[3].(*StateExitRecord); !ok || !exit.CompletionAccepted {
+		t.Fatalf("record[3] = %#v, want accepted *StateExitRecord", loadedSession.Records[3])
 	}
 	if loadedWorkflow == nil || loadedWorkflow.WorkflowID != workflow.WorkflowID || len(loadedWorkflow.Records) != 1 {
 		t.Fatalf("loaded workflow mismatch: %+v", loadedWorkflow)

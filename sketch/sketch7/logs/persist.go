@@ -172,6 +172,10 @@ func newSessionRecordByKind(kind string) (SessionRecord, error) {
 		return &RetryRecord{}, nil
 	case "completion":
 		return &CompletionRecord{}, nil
+	case "state_enter":
+		return &StateEnterRecord{}, nil
+	case "state_exit":
+		return &StateExitRecord{}, nil
 	default:
 		return nil, fmt.Errorf("unknown session record kind %q", kind)
 	}
