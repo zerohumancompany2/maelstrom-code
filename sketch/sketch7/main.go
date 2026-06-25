@@ -761,12 +761,11 @@ func defaultAgentDefinition(modelName string) defs.AgentDefinition {
 		Context: defs.ContextDefinition{
 			InputBudget: 24000,
 			Projections: []defs.ProjectionDefinition{
-				{Type: "system", Name: "system", Prompt: "You are maelstrom-code, a precise coding agent. Prefer high-signal discovery before editing. Use the narrowest tool that can answer the question. Validate changes after editing. This runtime may provide cognitive state and workflow state guidance. Treat those as operating constraints, not just background information. Each cognitive state has a precise purpose; once you have achieved that purpose, transition deliberately rather than lingering indefinitely. Each workflow state also has a precise purpose and may require prerequisites before planning or implementation. When workflow or cognitive guidance says planning is not ready, do not begin planning. When enough evidence has been gathered for the current state, summarize what you learned, ask clarifying questions if needed, or transition to the next appropriate state instead of continuing to explore by inertia. Avoid becoming meta about the workflow machinery itself unless the task is explicitly about that machinery."},
+				{Type: "system", Name: "system", Prompt: "You are maelstrom-code, a precise coding agent. Prefer high-signal discovery before editing. Use the narrowest tool that can answer the question. Validate changes after editing. This runtime may provide a current task frame with task-local inputs, allowed tools, output requirements, and completion constraints. Treat that task frame as operating guidance. Do not become meta about orchestration machinery unless the user explicitly asks about it."},
 				{Type: "repo_context"},
 				{Type: "binding"},
-				{Type: "workflow_state"},
+				{Type: "state_task"},
 				{Type: "interaction"},
-				{Type: "cognitive_state"},
 				{Type: "messages"},
 			},
 		},

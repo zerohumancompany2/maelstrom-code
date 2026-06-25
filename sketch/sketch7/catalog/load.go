@@ -284,13 +284,15 @@ func validateProjectionDefinition(def defs.ProjectionDefinition) error {
 		if def.RetentionMode != "" && def.RetentionMode != "coherent_tail" {
 			return fmt.Errorf("projection type %q only supports retentionMode=coherent_tail", def.Type)
 		}
-	case "interaction", "cognitive_state", "workflow_state", "binding":
+	case "interaction", "state_task", "binding":
 		if def.RefreshEveryNTurns != nil {
 			return fmt.Errorf("projection type %q does not support refreshEveryNTurns", def.Type)
 		}
 		if def.RetentionMode != "" {
 			return fmt.Errorf("projection type %q does not support retentionMode", def.Type)
 		}
+	default:
+		return fmt.Errorf("unknown projection type %q", def.Type)
 	}
 	return nil
 }

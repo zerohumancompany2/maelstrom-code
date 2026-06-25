@@ -29,7 +29,7 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 		view := BuildSessionView(agent, agentDef, workflowDef, sessionHistory, workflowHistory)
 		payloadID := sessionHistory.NextBundleID()
 		inferencePayload := contextBuilder.Build(payloadID, ctxpkg.BuildSections(agentDef, view, sessionHistory, ctxpkg.RepoContextOptions{RootDir: ".", RefreshEveryTurns: 12, MaxFilesToInspect: 2000, MaxTopLevelEntries: 8, MaxExtensionsToShow: 5}), view, sessionHistory, workflowHistory)
-		persistContextSnapshots(sessionHistory, inferencePayload)
+		inferencePayload = persistContextSnapshots(sessionHistory, inferencePayload)
 		assembled, err := assembler.Assemble(prompt.Input{Payload: inferencePayload})
 		if err != nil {
 			return err
@@ -91,7 +91,7 @@ func (l Loop) shouldStop(history *logs.SessionHistory) bool {
 	return strings.Contains(last.Content, l.StopToken)
 }
 
-func persistContextSnapshots(history *logs.SessionHistory, payload ctxpkg.Payload) {
+func persistContextSnapshots(history *logs.SessionHistory, payload ctxpkg.Payload) ctxpkg.Payload {
 	turn := ctxpkg.InteractionTurnCount(history)
 	for i, section := range payload.Sections {
 		if section.LogicalKey == "" || section.SourceKind == "static" {
@@ -109,6 +109,7 @@ func persistContextSnapshots(history *logs.SessionHistory, payload ctxpkg.Payloa
 		history.Append(record)
 		payload.Sections[i].RecordID = record.RecordID()
 	}
+	return payload
 }
 
 func latestContextSnapshotRecord(history *logs.SessionHistory, logicalKey string) *logs.ContextSnapshotRecord {

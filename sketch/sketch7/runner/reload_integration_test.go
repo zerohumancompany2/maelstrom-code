@@ -14,8 +14,8 @@ import (
 func TestReloadedAgentDefinitionAffectsSubsequentRun(t *testing.T) {
 	memory := catalog.NewMemory()
 	modelRaw := []byte("apiVersion: maelstrom/v1\nkind: Model\nname: test-model\nproviders:\n  - name: fake\n    modelRef: fake/model\nlimits:\n  contextWindow: 32768\n  maxOutputTokens: 1024\ndefaults:\n  temperature: 0.7\n  topP: 1.0\ncapabilities:\n  tools: true\n  reasoning: true\n  multimodal: false\n  streaming: false\n")
-	agentV1 := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: test-agent\ndescription: Test agent\nmodel: test-model\ncontext:\n  inputBudget: 2048\n  projections:\n    - type: system\n      name: system\n      prompt: System prompt v1\n    - type: cognitive_state\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      prompt: Observe v1.\n  transitions: []\n")
-	agentV2 := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: test-agent\ndescription: Test agent\nmodel: test-model\ncontext:\n  inputBudget: 2048\n  projections:\n    - type: system\n      name: system\n      prompt: System prompt v2\n    - type: cognitive_state\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      prompt: Observe v2.\n  transitions: []\n")
+	agentV1 := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: test-agent\ndescription: Test agent\nmodel: test-model\ncontext:\n  inputBudget: 2048\n  projections:\n    - type: system\n      name: system\n      prompt: System prompt v1\n    - type: state_task\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      prompt: Observe v1.\n  transitions: []\n")
+	agentV2 := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: test-agent\ndescription: Test agent\nmodel: test-model\ncontext:\n  inputBudget: 2048\n  projections:\n    - type: system\n      name: system\n      prompt: System prompt v2\n    - type: state_task\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      prompt: Observe v2.\n  transitions: []\n")
 
 	if err := catalog.LoadIntoMemory(memory, modelRaw); err != nil {
 		t.Fatalf("load model: %v", err)
@@ -68,14 +68,14 @@ func TestReloadedAgentDefinitionAffectsSubsequentRun(t *testing.T) {
 		t.Fatalf("first prompt = %q, want System prompt v2", assembledV2.Segments[0].TokenText())
 	}
 	if assembledV2.Segments[1].TokenText() == assembledV1.Segments[1].TokenText() {
-		t.Fatalf("cognitive projection text did not change across reload: v1=%q v2=%q", assembledV1.Segments[1].TokenText(), assembledV2.Segments[1].TokenText())
+		t.Fatalf("state task text did not change across reload: v1=%q v2=%q", assembledV1.Segments[1].TokenText(), assembledV2.Segments[1].TokenText())
 	}
 }
 
 func TestReloadedWorkflowDefinitionAffectsSubsequentRun(t *testing.T) {
 	memory := catalog.NewMemory()
 	modelRaw := []byte("apiVersion: maelstrom/v1\nkind: Model\nname: test-model\nproviders:\n  - name: fake\n    modelRef: fake/model\nlimits:\n  contextWindow: 32768\n  maxOutputTokens: 1024\ndefaults:\n  temperature: 0.7\n  topP: 1.0\ncapabilities:\n  tools: true\n  reasoning: true\n  multimodal: false\n  streaming: false\n")
-	agentRaw := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: test-agent\nmodel: test-model\ncontext:\n  inputBudget: 2048\n  projections:\n    - type: workflow_state\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n  transitions: []\n")
+	agentRaw := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: test-agent\nmodel: test-model\ncontext:\n  inputBudget: 2048\n  projections:\n    - type: state_task\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n  transitions: []\n")
 	workflowV1 := []byte("apiVersion: maelstrom/v1\nkind: Workflow\nname: test-workflow\ndescription: Workflow v1\ncontext: Context v1\nstatechart:\n  initialState: chatting\n  states:\n    - name: chatting\n  transitions: []\n")
 	workflowV2 := []byte("apiVersion: maelstrom/v1\nkind: Workflow\nname: test-workflow\ndescription: Workflow v2\ncontext: Context v2\nstatechart:\n  initialState: chatting\n  states:\n    - name: chatting\n  transitions: []\n")
 
@@ -114,6 +114,6 @@ func TestReloadedWorkflowDefinitionAffectsSubsequentRun(t *testing.T) {
 		t.Fatalf("assemble v2: %v", err)
 	}
 	if assembledV1.Segments[0].TokenText() == assembledV2.Segments[0].TokenText() {
-		t.Fatalf("workflow projection text did not change across reload: v1=%q v2=%q", assembledV1.Segments[0].TokenText(), assembledV2.Segments[0].TokenText())
+		t.Fatalf("state task text did not change across workflow reload: v1=%q v2=%q", assembledV1.Segments[0].TokenText(), assembledV2.Segments[0].TokenText())
 	}
 }

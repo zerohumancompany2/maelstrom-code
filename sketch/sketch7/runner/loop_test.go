@@ -73,7 +73,6 @@ func TestLoopRunProcessesToolCallAndAssistantResponse(t *testing.T) {
 		Tools:    toolRegistry,
 		Projections: []prompt.Projection{
 			prompt.StaticProjection{ProjectionName: "system", Role: "system", Prompt: "You are a coding agent."},
-			prompt.CognitiveProjection{},
 			prompt.RecentHistoryProjection{},
 		},
 		MaxHistory: 10,
@@ -158,6 +157,74 @@ func TestLoopRunStopsWhenProviderReturnsOnlyAssistantOutput(t *testing.T) {
 	}
 }
 
+func TestLoopRunPersistsAndIncludesStateTaskContextSnapshot(t *testing.T) {
+	providerScript := &scriptedProvider{responses: []provider.Response{{Outputs: []provider.Output{provider.AssistantOutput{Content: "Done."}}}}}
+	loop := Loop{
+		Provider: providerScript,
+		Tools:    tools.NewRegistry(),
+		Projections: []prompt.Projection{
+			prompt.ContextProjection{},
+		},
+		MaxHistory: 10,
+	}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file", "run_command"}}
+	agentDef := defs.AgentDefinition{
+		Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}},
+		Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{
+			Name:         "observe",
+			Prompt:       "Gather evidence before acting.",
+			EnabledTools: []string{"read_file"},
+			Outputs:      defs.StateOutputContract{SchemaName: "cognitive_step_v1", RequiredFields: []string{"summary"}},
+		}}},
+	}
+	sessionHistory := logs.NewSessionHistory("session-state-task-snapshot")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Inspect first."})
+
+	if err := loop.Run(agent, agentDef, nil, sessionHistory, nil); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+
+	foundSnapshotID := ""
+	foundEnvelope := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.ContextSnapshotRecord:
+			if v.LogicalKey == "state_task" && strings.Contains(v.Content, "Current task: Gather evidence before acting.") {
+				foundSnapshotID = v.RecordID()
+			}
+		case logs.InferenceEnvelopeRecord:
+			for _, id := range v.IncludedContextRecordIDs {
+				if foundSnapshotID != "" && id == foundSnapshotID {
+					foundEnvelope = true
+				}
+			}
+		}
+	}
+	if foundSnapshotID == "" {
+		t.Fatalf("expected state_task context snapshot, got %#v", sessionHistory.Records)
+	}
+	if !foundEnvelope {
+		t.Fatalf("expected inference envelope to include state_task snapshot %q, got %#v", foundSnapshotID, sessionHistory.Records)
+	}
+	if len(providerScript.requests) != 1 {
+		t.Fatalf("got %d provider requests, want 1", len(providerScript.requests))
+	}
+	foundPromptLine := false
+	for _, line := range providerScript.requests[0].Lines {
+		if strings.Contains(line.Content, "Current task: Gather evidence before acting.") && strings.Contains(line.Content, "Required output schema: cognitive_step_v1") {
+			foundPromptLine = true
+		}
+		for _, forbidden := range []string{"Cognitive mode", "Workflow directive", "Suggested next transitions"} {
+			if strings.Contains(line.Content, forbidden) {
+				t.Fatalf("state_task prompt line contains forbidden old phrasing %q: %q", forbidden, line.Content)
+			}
+		}
+	}
+	if !foundPromptLine {
+		t.Fatalf("expected provider request to include state_task prompt line, got %#v", providerScript.requests[0].Lines)
+	}
+}
+
 func TestLoopRunRecordsOutputContractEvaluationForAssistantJSON(t *testing.T) {
 	fakeProvider := &provider.FakeProvider{Response: provider.Response{Outputs: []provider.Output{
 		provider.AssistantOutput{Content: `{"state":"act","action_type":"final","summary":"done","completion_signal":true,"final_response":"All done."}`},
@@ -167,7 +234,6 @@ func TestLoopRunRecordsOutputContractEvaluationForAssistantJSON(t *testing.T) {
 		Tools:    tools.NewRegistry(),
 		Projections: []prompt.Projection{
 			prompt.StaticProjection{ProjectionName: "system", Role: "system", Prompt: "You are a coding agent."},
-			prompt.CognitiveProjection{},
 		},
 		MaxHistory: 10,
 	}
@@ -217,7 +283,6 @@ func TestLoopRunRecordsToolValidationFailure(t *testing.T) {
 		Tools:    tools.NewRegistry(tools.ReadFileTool{RootDir: t.TempDir()}),
 		Projections: []prompt.Projection{
 			prompt.StaticProjection{ProjectionName: "system", Role: "system", Prompt: "You are a coding agent."},
-			prompt.CognitiveProjection{},
 		},
 		MaxHistory: 10,
 	}
@@ -267,7 +332,6 @@ func TestLoopRunProcessesWorkflowTransitionWhenBound(t *testing.T) {
 		Tools:    toolRegistry,
 		Projections: []prompt.Projection{
 			prompt.StaticProjection{ProjectionName: "system", Role: "system", Prompt: "You are a coding agent."},
-			prompt.WorkflowProjection{},
 			prompt.RecentHistoryProjection{},
 		},
 		MaxHistory: 10,

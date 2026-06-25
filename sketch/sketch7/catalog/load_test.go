@@ -45,13 +45,13 @@ func TestLoadAgentFallsBackToChunksShape(t *testing.T) {
 }
 
 func TestLoadAgentParsesProjectionPolicyFields(t *testing.T) {
-	raw := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: policy-agent\nmodel: glm-4.5-air\ncontext:\n  inputBudget: 1000\n  projections:\n    - type: repo_context\n      refreshEveryNTurns: 12\n      retentionMode: latest_effective\n    - type: messages\n      retentionMode: coherent_tail\ncognitive:\n  initialState: observe\n  states: []\n  transitions: []\n")
+	raw := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: policy-agent\nmodel: glm-4.5-air\ncontext:\n  inputBudget: 1000\n  projections:\n    - type: repo_context\n      refreshEveryNTurns: 12\n      retentionMode: latest_effective\n    - type: state_task\n    - type: messages\n      retentionMode: coherent_tail\ncognitive:\n  initialState: observe\n  states: []\n  transitions: []\n")
 	def, err := LoadAgent(raw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(def.Context.Projections) != 2 {
-		t.Fatalf("got %d projections, want 2", len(def.Context.Projections))
+	if len(def.Context.Projections) != 3 {
+		t.Fatalf("got %d projections, want 3", len(def.Context.Projections))
 	}
 	if def.Context.Projections[0].RefreshEveryNTurns == nil || *def.Context.Projections[0].RefreshEveryNTurns != 12 {
 		t.Fatalf("RefreshEveryNTurns = %#v, want 12", def.Context.Projections[0].RefreshEveryNTurns)
@@ -59,8 +59,21 @@ func TestLoadAgentParsesProjectionPolicyFields(t *testing.T) {
 	if def.Context.Projections[0].RetentionMode != "latest_effective" {
 		t.Fatalf("RetentionMode = %q, want latest_effective", def.Context.Projections[0].RetentionMode)
 	}
-	if def.Context.Projections[1].RetentionMode != "coherent_tail" {
-		t.Fatalf("messages RetentionMode = %q, want coherent_tail", def.Context.Projections[1].RetentionMode)
+	if def.Context.Projections[1].Type != "state_task" {
+		t.Fatalf("second projection = %q, want state_task", def.Context.Projections[1].Type)
+	}
+	if def.Context.Projections[2].RetentionMode != "coherent_tail" {
+		t.Fatalf("messages RetentionMode = %q, want coherent_tail", def.Context.Projections[2].RetentionMode)
+	}
+}
+
+func TestLoadAgentRejectsRemovedStateProjectionTypes(t *testing.T) {
+	for _, projectionType := range []string{"cognitive_state", "workflow_state"} {
+		raw := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: invalid-agent\nmodel: glm-4.5-air\ncontext:\n  inputBudget: 1000\n  projections:\n    - type: " + projectionType + "\ncognitive:\n  initialState: observe\n  states: []\n  transitions: []\n")
+		_, err := LoadAgent(raw)
+		if err == nil {
+			t.Fatalf("expected validation error for removed projection type %q", projectionType)
+		}
 	}
 }
 

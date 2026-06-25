@@ -58,16 +58,27 @@ func TestRepoContextCacheRefreshesByTurnCount(t *testing.T) {
 	}
 }
 
-func TestBuildSectionsWorkflowStateIncludesProgressReadiness(t *testing.T) {
-	agentDef := defs.AgentDefinition{Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "workflow_state"}}}}
+func TestBuildSectionsStateTaskRendersTaskFacingGuidance(t *testing.T) {
+	agentDef := defs.AgentDefinition{Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}}}
 	history := logs.NewSessionHistory("session-workflow-progress-001")
 	history.Append(logs.WorkflowTransitionRefRecord{SessionBaseRecord: history.NextRecord("workflow_transition_ref"), WorkflowID: "wf-001", FromState: "intake", ToState: "repo_orientation", Trigger: "begin_repo_orientation"})
 	session := runtime.SessionView{
+		Agent: runtime.Agent{ToolNames: []string{"read_file", "run_command", "replace_text"}},
+		Cognitive: runtime.CognitiveView{
+			Prompt:       "Gather evidence before editing.",
+			EnabledTools: []string{"read_file", "run_command"},
+			Inputs:       defs.StateInputContract{Required: []string{"task_statement"}, Optional: []string{"repo_context"}},
+			Outputs:      defs.StateOutputContract{SchemaName: "cognitive_step_v1", RequiredFields: []string{"summary", "completion_signal"}},
+		},
 		Workflow: &runtime.WorkflowView{
 			WorkflowID:   "wf-001",
 			CurrentState: "repo_orientation",
 			Description:  "Conversation to execution",
 			Context:      "Use this workflow for coding tasks.",
+			EnabledTools: []string{"read_file"},
+			Inputs:       defs.StateInputContract{Required: []string{"acceptance_criteria"}},
+			Outputs:      defs.StateOutputContract{SchemaName: "workflow_step_v1", RequiredFields: []string{"artifact_status"}},
+			Completion:   defs.StateCompletionContract{SuccessWhen: []string{"artifact_status == ready"}},
 		},
 	}
 	sections := BuildSections(agentDef, session, history, RepoContextOptions{})
@@ -75,13 +86,27 @@ func TestBuildSectionsWorkflowStateIncludesProgressReadiness(t *testing.T) {
 		t.Fatalf("got %d sections, want 1", len(sections))
 	}
 	content := sections[0].Content
-	if !strings.Contains(content, "Completed checkpoints: repo_orientation") {
-		t.Fatalf("content = %q, want completed checkpoint info", content)
+	if sections[0].LogicalKey != "state_task" || sections[0].SourceKind != "derived_state_task" {
+		t.Fatalf("section = %+v, want state_task derived section", sections[0])
 	}
-	if !strings.Contains(content, "Remaining before planning: clarification") {
-		t.Fatalf("content = %q, want remaining clarification checkpoint", content)
+	if !strings.Contains(content, "Current task: Gather evidence before editing.") {
+		t.Fatalf("content = %q, want current task prompt", content)
 	}
-	if !strings.Contains(content, "Planning readiness: not ready") {
-		t.Fatalf("content = %q, want readiness status", content)
+	if !strings.Contains(content, "Available tools: read_file") {
+		t.Fatalf("content = %q, want intersected available tools", content)
+	}
+	if !strings.Contains(content, "Required output schema: cognitive_step_v1") {
+		t.Fatalf("content = %q, want cognitive output schema", content)
+	}
+	if !strings.Contains(content, "Workflow output schema: workflow_step_v1") {
+		t.Fatalf("content = %q, want workflow output schema", content)
+	}
+	if !strings.Contains(content, "Required inputs: task_statement") {
+		t.Fatalf("content = %q, want cognitive input expectations", content)
+	}
+	for _, forbidden := range []string{"Cognitive mode", "Workflow directive", "Suggested next transitions"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("content = %q, must not contain old state-machine phrase %q", content, forbidden)
+		}
 	}
 }

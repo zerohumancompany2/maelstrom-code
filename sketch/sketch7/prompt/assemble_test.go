@@ -33,8 +33,6 @@ func TestAssemblerBuildsDeterministicProjectionSequence(t *testing.T) {
 		StaticProjection{ProjectionName: "system", Role: "system", Prompt: "You are a precise coding agent."},
 		InteractionProjection{},
 		BindingProjection{},
-		WorkflowProjection{},
-		CognitiveProjection{},
 		RecentHistoryProjection{},
 	}}
 
@@ -42,8 +40,8 @@ func TestAssemblerBuildsDeterministicProjectionSequence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(assembled.Segments) != 6 {
-		t.Fatalf("got %d segments, want 6", len(assembled.Segments))
+	if len(assembled.Segments) != 4 {
+		t.Fatalf("got %d segments, want 4", len(assembled.Segments))
 	}
 
 	first, ok := assembled.Segments[0].(PromptSegment)

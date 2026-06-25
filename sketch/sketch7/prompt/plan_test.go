@@ -10,8 +10,7 @@ func TestBuildProjectionPlanBuildsKnownProjectionTypes(t *testing.T) {
 	agentDef := defs.AgentDefinition{Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{
 		{Type: "system", Name: "system", Prompt: "You are helpful."},
 		{Type: "binding"},
-		{Type: "workflow_state"},
-		{Type: "cognitive_state"},
+		{Type: "state_task"},
 		{Type: "interaction"},
 		{Type: "messages"},
 	}}}
@@ -25,6 +24,16 @@ func TestBuildProjectionPlanBuildsKnownProjectionTypes(t *testing.T) {
 	}
 	if maxHistory != 12 {
 		t.Fatalf("MaxHistory = %d, want 12", maxHistory)
+	}
+}
+
+func TestBuildProjectionPlanRejectsOldStateProjectionTypes(t *testing.T) {
+	for _, projectionType := range []string{"cognitive_state", "workflow_state"} {
+		agentDef := defs.AgentDefinition{Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: projectionType}}}}
+		_, _, err := BuildProjectionPlan(agentDef)
+		if err == nil {
+			t.Fatalf("expected error for removed projection type %q", projectionType)
+		}
 	}
 }
 
