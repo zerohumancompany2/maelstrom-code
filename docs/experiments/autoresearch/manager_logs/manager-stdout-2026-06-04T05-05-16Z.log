@@ -1,0 +1,68 @@
+Manager tick completed.
+
+Decision:
+- New evidence was substantial enough to justify intervention.
+- I did not retarget benchmarks; the current family is still informative.
+- I did not patch the scorer/harness; no scoring bug is evident.
+- I did intervene on variant/prompt policy because the batch showed mixed signal with recurring behavioral failures.
+
+What I observed:
+- `manager_state.json` now shows `live_loop_error`, with recent loop failures recorded.
+- New results since the previous review include:
+  - a failed run row from the live loop
+  - a failure-hardening verification run at `4/6`
+  - a new live-loop run regressing to `2/6`
+- The `4/6` run showed meaningful progress:
+  - `required_files` passed
+  - `test_coverage` passed
+  - `schema_validity` passed
+  - but `adjacent_integration` still failed
+  - and `forced_report_obedience` still failed
+- The `2/6` run regressed on:
+  - `required_files`
+  - `schema_validity`
+  - `adjacent_integration`
+  - `forced_report_obedience`
+
+Key failure pattern:
+- The system still fails to actually read a concrete adjacent non-context Go file before finalizing.
+- It continues to emit pseudo tool-call markup after the boundary/coverage gate.
+- In the regressed run, it also wrapped the first forced-report JSON in markdown fences, breaking first-try schema validity.
+- It sometimes lists directories like `sketch/sketch7/runtime/` as “relevant files,” which does not satisfy adjacent evidence.
+
+Repo edits made:
+1. Updated `docs/experiments/autoresearch/variants.yaml`
+   - added `json-boundary-discipline-v1`
+   - this variant explicitly:
+     - forbids markdown fences around forced-report JSON
+     - forbids pseudo tool-call markup
+     - forbids treating directories as adjacent evidence
+     - instructs the model to spend the last inspection turn on a concrete adjacent Go file
+     - prioritizes:
+       1. `sketch/sketch7/main.go`
+       2. `sketch/sketch7/runtime/view.go`
+       3. `sketch/sketch7/logs/session.go`
+
+2. Updated `docs/experiments/autoresearch/manager_state.json`
+   - set:
+     - `last_reviewed_at`
+     - `next_meaningful_review_after`
+     - `last_manager_action`
+     - `last_tick_status`
+     - `last_reviewed_results_path`
+   - kept `best_variant_id` as `baseline`
+   - added notes about:
+     - mixed batch outcomes
+     - live-loop instability
+     - improvement in the verification run
+     - regression in the later live-loop run
+     - rationale for prompt/control tightening
+
+Supervisory continuity:
+- The benchmark family remains useful.
+- The current line is not healthy enough to leave untouched.
+- Direction is now tightened around:
+  - raw JSON discipline
+  - concrete adjacent-file evidence
+  - no post-boundary pseudo-tool behavior
+- Next meaningful review should happen after post-intervention runs land.

@@ -1,0 +1,495 @@
+{
+  "metadata": {
+    "generated_at": "2026-06-04T03:50:13.148956+00:00",
+    "runner": "docs/experiments/autoresearch/run_benchmarks.py",
+    "selected_benchmarks": [
+      "discovery.context_inference.required_files.v1",
+      "discovery.context_inference.test_coverage.v1",
+      "discovery.context_inference.adjacent_integration.v1",
+      "format.repo_inspection.schema_validity.v1",
+      "control.repo_inspection.forced_report_obedience.v1",
+      "control.repo_inspection.repair_obedience.v1"
+    ],
+    "selected_raw_runs": [
+      "docs/experiments/raw_data/2026-06-04T03-46-57Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json"
+    ],
+    "mode_filter": null,
+    "prompt_filter": null
+  },
+  "summary": {
+    "total_benchmarks": 6,
+    "total_evaluations": 6,
+    "total_passed": 3,
+    "overall_pass_rate": 0.5,
+    "benchmarks": [
+      {
+        "benchmark": "discovery.context_inference.required_files.v1",
+        "passed": 0,
+        "total": 1,
+        "pass_rate": 0.0
+      },
+      {
+        "benchmark": "discovery.context_inference.test_coverage.v1",
+        "passed": 1,
+        "total": 1,
+        "pass_rate": 1.0
+      },
+      {
+        "benchmark": "discovery.context_inference.adjacent_integration.v1",
+        "passed": 0,
+        "total": 1,
+        "pass_rate": 0.0
+      },
+      {
+        "benchmark": "format.repo_inspection.schema_validity.v1",
+        "passed": 1,
+        "total": 1,
+        "pass_rate": 1.0
+      },
+      {
+        "benchmark": "control.repo_inspection.forced_report_obedience.v1",
+        "passed": 0,
+        "total": 1,
+        "pass_rate": 0.0
+      },
+      {
+        "benchmark": "control.repo_inspection.repair_obedience.v1",
+        "passed": 1,
+        "total": 1,
+        "pass_rate": 1.0
+      }
+    ]
+  },
+  "results": [
+    {
+      "benchmark": "discovery.context_inference.required_files.v1",
+      "spec_path": "docs/experiments/autoresearch/benchmarks/discovery.context_inference.required_files.v1.yaml",
+      "evaluations": [
+        {
+          "raw_run": "docs/experiments/raw_data/2026-06-04T03-46-57Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json",
+          "mode": "bounded_v3",
+          "status": "completed",
+          "passed": false,
+          "metrics": {
+            "required_files_read": [
+              "sketch/sketch7/context/context.go",
+              "sketch/sketch7/context/sections.go"
+            ],
+            "required_recall": 0.6666666666666666,
+            "first_required_read_turn": 5,
+            "discovery_precision": 0.6666666666666666,
+            "tool_calls": 7,
+            "model_turns": 12,
+            "repair_turns": 2,
+            "forced_reports": 1,
+            "completed": true,
+            "mode": "bounded_v3",
+            "prompt": "Review our implementation of context ofr inferrence in sketch/sketch7 and report how it functions. List any issues you see. Make recommendations on architectural improvements.",
+            "task_artifact": {
+              "relevant_files": [
+                "sketch/sketch7/context/context.go",
+                "sketch/sketch7/context/sections.go",
+                "sketch/sketch7/context/context_test.go"
+              ],
+              "findings": [
+                "Functionality: The module constructs an inference payload containing structured system sections and a trimmed conversation transcript. `Builder.Build` aggregates session metadata, generates dynamic sections via `BuildSections` (supporting system, interaction, cognitive, workflow, binding, and repo contexts), and converts `SessionHistory` into messages. `trimMessages` implements a block-based sliding window that preserves tool-call/result pairs and anchors the latest user message to maintain context coherence.",
+                "Issue - Global State: `sections.go` relies on a package-level `defaultRepoCache` (line 13) to fetch repository summaries. This tight coupling hinders testability, prevents dependency injection, and risks concurrency issues if the cache is not thread-safe.",
+                "Issue - Dead Code: `Builder.Build` accepts a `workflow *logs.WorkflowHistory` parameter but explicitly ignores it (`_ = workflow` at `context.go:52`), indicating incomplete implementation or leftover scaffolding.",
+                "Issue - Hardcoded Limits: `trimMessages` defaults to `MaxMessages = 12` (`context.go:58`) when not configured. This rigid limit may truncate valuable context for complex tasks and lacks session-level configurability.",
+                "Issue - Deprecated Hashing: `HashContent` uses SHA-1 (`context.go:237`), which is cryptographically deprecated. Even for non-security checksums, it is generally discouraged in modern codebases.",
+                "Recommendation - Dependency Injection: Refactor `BuildSections` to accept a `RepoContextCache` interface or embed it within a `ContextBuilder` struct. This eliminates global state and enables deterministic testing.",
+                "Recommendation - Interface Abstraction: Introduce interfaces for `SessionHistory` and `WorkflowHistory` to decouple the `context` package from the concrete `logs` types, improving modularity and mockability.",
+                "Recommendation - Configuration Externalization: Allow `MaxMessages` and trimming behavior to be configured per-agent or per-session via the `Builder` or `Payload` options, rather than relying on hardcoded fallbacks.",
+                "Recommendation - Hashing Update: Replace SHA-1 with SHA-256 for security compliance, or use a non-cryptographic hash like xxHash if performance is the primary concern."
+              ],
+              "unknowns": [
+                "Implementation details and thread-safety guarantees of `RepoContextCache` in `repo.go`.",
+                "How the `Builder` is instantiated and wired into the inference loop or runner components.",
+                "Test coverage for edge cases in `trimMessages` (e.g., orphaned tool calls, empty history, or blocks exceeding `MaxMessages`)."
+              ],
+              "enough_context": true
+            }
+          },
+          "pass_details": {
+            "logic": "all",
+            "results": [
+              false
+            ],
+            "clauses": [
+              {
+                "metric": "required_recall",
+                "op": ">=",
+                "value": 1.0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "benchmark": "discovery.context_inference.test_coverage.v1",
+      "spec_path": "docs/experiments/autoresearch/benchmarks/discovery.context_inference.test_coverage.v1.yaml",
+      "evaluations": [
+        {
+          "raw_run": "docs/experiments/raw_data/2026-06-04T03-46-57Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json",
+          "mode": "bounded_v3",
+          "status": "completed",
+          "passed": true,
+          "metrics": {
+            "required_tests_read": [
+              "sketch/sketch7/context/context_test.go"
+            ],
+            "test_recall": 1.0,
+            "discovery_precision": 0.3333333333333333,
+            "tool_calls": 7,
+            "model_turns": 12,
+            "repair_turns": 2,
+            "forced_reports": 1,
+            "completed": true,
+            "mode": "bounded_v3",
+            "prompt": "Review our implementation of context ofr inferrence in sketch/sketch7 and report how it functions. List any issues you see. Make recommendations on architectural improvements.",
+            "task_artifact": {
+              "relevant_files": [
+                "sketch/sketch7/context/context.go",
+                "sketch/sketch7/context/sections.go",
+                "sketch/sketch7/context/context_test.go"
+              ],
+              "findings": [
+                "Functionality: The module constructs an inference payload containing structured system sections and a trimmed conversation transcript. `Builder.Build` aggregates session metadata, generates dynamic sections via `BuildSections` (supporting system, interaction, cognitive, workflow, binding, and repo contexts), and converts `SessionHistory` into messages. `trimMessages` implements a block-based sliding window that preserves tool-call/result pairs and anchors the latest user message to maintain context coherence.",
+                "Issue - Global State: `sections.go` relies on a package-level `defaultRepoCache` (line 13) to fetch repository summaries. This tight coupling hinders testability, prevents dependency injection, and risks concurrency issues if the cache is not thread-safe.",
+                "Issue - Dead Code: `Builder.Build` accepts a `workflow *logs.WorkflowHistory` parameter but explicitly ignores it (`_ = workflow` at `context.go:52`), indicating incomplete implementation or leftover scaffolding.",
+                "Issue - Hardcoded Limits: `trimMessages` defaults to `MaxMessages = 12` (`context.go:58`) when not configured. This rigid limit may truncate valuable context for complex tasks and lacks session-level configurability.",
+                "Issue - Deprecated Hashing: `HashContent` uses SHA-1 (`context.go:237`), which is cryptographically deprecated. Even for non-security checksums, it is generally discouraged in modern codebases.",
+                "Recommendation - Dependency Injection: Refactor `BuildSections` to accept a `RepoContextCache` interface or embed it within a `ContextBuilder` struct. This eliminates global state and enables deterministic testing.",
+                "Recommendation - Interface Abstraction: Introduce interfaces for `SessionHistory` and `WorkflowHistory` to decouple the `context` package from the concrete `logs` types, improving modularity and mockability.",
+                "Recommendation - Configuration Externalization: Allow `MaxMessages` and trimming behavior to be configured per-agent or per-session via the `Builder` or `Payload` options, rather than relying on hardcoded fallbacks.",
+                "Recommendation - Hashing Update: Replace SHA-1 with SHA-256 for security compliance, or use a non-cryptographic hash like xxHash if performance is the primary concern."
+              ],
+              "unknowns": [
+                "Implementation details and thread-safety guarantees of `RepoContextCache` in `repo.go`.",
+                "How the `Builder` is instantiated and wired into the inference loop or runner components.",
+                "Test coverage for edge cases in `trimMessages` (e.g., orphaned tool calls, empty history, or blocks exceeding `MaxMessages`)."
+              ],
+              "enough_context": true
+            }
+          },
+          "pass_details": {
+            "logic": "all",
+            "results": [
+              true
+            ],
+            "clauses": [
+              {
+                "metric": "test_recall",
+                "op": ">=",
+                "value": 1.0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "benchmark": "discovery.context_inference.adjacent_integration.v1",
+      "spec_path": "docs/experiments/autoresearch/benchmarks/discovery.context_inference.adjacent_integration.v1.yaml",
+      "evaluations": [
+        {
+          "raw_run": "docs/experiments/raw_data/2026-06-04T03-46-57Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json",
+          "mode": "bounded_v3",
+          "status": "completed",
+          "passed": false,
+          "metrics": {
+            "required_files_read": [
+              "sketch/sketch7/context/context.go",
+              "sketch/sketch7/context/sections.go"
+            ],
+            "required_recall": 1.0,
+            "first_required_read_turn": 5,
+            "useful_files_read": [],
+            "useful_recall": 0.0,
+            "adjacent_files_read": [],
+            "adjacent_recall": 0.0,
+            "required_tests_read": [
+              "sketch/sketch7/context/context_test.go"
+            ],
+            "test_recall": 1.0,
+            "discovery_precision": 1.0,
+            "tool_calls": 7,
+            "model_turns": 12,
+            "repair_turns": 2,
+            "forced_reports": 1,
+            "completed": true,
+            "mode": "bounded_v3",
+            "prompt": "Review our implementation of context ofr inferrence in sketch/sketch7 and report how it functions. List any issues you see. Make recommendations on architectural improvements.",
+            "task_artifact": {
+              "relevant_files": [
+                "sketch/sketch7/context/context.go",
+                "sketch/sketch7/context/sections.go",
+                "sketch/sketch7/context/context_test.go"
+              ],
+              "findings": [
+                "Functionality: The module constructs an inference payload containing structured system sections and a trimmed conversation transcript. `Builder.Build` aggregates session metadata, generates dynamic sections via `BuildSections` (supporting system, interaction, cognitive, workflow, binding, and repo contexts), and converts `SessionHistory` into messages. `trimMessages` implements a block-based sliding window that preserves tool-call/result pairs and anchors the latest user message to maintain context coherence.",
+                "Issue - Global State: `sections.go` relies on a package-level `defaultRepoCache` (line 13) to fetch repository summaries. This tight coupling hinders testability, prevents dependency injection, and risks concurrency issues if the cache is not thread-safe.",
+                "Issue - Dead Code: `Builder.Build` accepts a `workflow *logs.WorkflowHistory` parameter but explicitly ignores it (`_ = workflow` at `context.go:52`), indicating incomplete implementation or leftover scaffolding.",
+                "Issue - Hardcoded Limits: `trimMessages` defaults to `MaxMessages = 12` (`context.go:58`) when not configured. This rigid limit may truncate valuable context for complex tasks and lacks session-level configurability.",
+                "Issue - Deprecated Hashing: `HashContent` uses SHA-1 (`context.go:237`), which is cryptographically deprecated. Even for non-security checksums, it is generally discouraged in modern codebases.",
+                "Recommendation - Dependency Injection: Refactor `BuildSections` to accept a `RepoContextCache` interface or embed it within a `ContextBuilder` struct. This eliminates global state and enables deterministic testing.",
+                "Recommendation - Interface Abstraction: Introduce interfaces for `SessionHistory` and `WorkflowHistory` to decouple the `context` package from the concrete `logs` types, improving modularity and mockability.",
+                "Recommendation - Configuration Externalization: Allow `MaxMessages` and trimming behavior to be configured per-agent or per-session via the `Builder` or `Payload` options, rather than relying on hardcoded fallbacks.",
+                "Recommendation - Hashing Update: Replace SHA-1 with SHA-256 for security compliance, or use a non-cryptographic hash like xxHash if performance is the primary concern."
+              ],
+              "unknowns": [
+                "Implementation details and thread-safety guarantees of `RepoContextCache` in `repo.go`.",
+                "How the `Builder` is instantiated and wired into the inference loop or runner components.",
+                "Test coverage for edge cases in `trimMessages` (e.g., orphaned tool calls, empty history, or blocks exceeding `MaxMessages`)."
+              ],
+              "enough_context": true
+            }
+          },
+          "pass_details": {
+            "logic": "all",
+            "results": [
+              true,
+              true,
+              false
+            ],
+            "clauses": [
+              {
+                "metric": "required_recall",
+                "op": ">=",
+                "value": 1.0
+              },
+              {
+                "metric": "test_recall",
+                "op": ">=",
+                "value": 1.0
+              },
+              {
+                "metric": "adjacent_recall",
+                "op": ">=",
+                "value": 0.333333
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "benchmark": "format.repo_inspection.schema_validity.v1",
+      "spec_path": "docs/experiments/autoresearch/benchmarks/format.repo_inspection.schema_validity.v1.yaml",
+      "evaluations": [
+        {
+          "raw_run": "docs/experiments/raw_data/2026-06-04T03-46-57Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json",
+          "mode": "bounded_v3",
+          "status": "completed",
+          "passed": true,
+          "metrics": {
+            "discovery_precision": 0.0,
+            "tool_calls": 7,
+            "model_turns": 12,
+            "repair_turns": 2,
+            "forced_reports": 1,
+            "completed": true,
+            "mode": "bounded_v3",
+            "prompt": "Review our implementation of context ofr inferrence in sketch/sketch7 and report how it functions. List any issues you see. Make recommendations on architectural improvements.",
+            "task_artifact": {
+              "relevant_files": [
+                "sketch/sketch7/context/context.go",
+                "sketch/sketch7/context/sections.go",
+                "sketch/sketch7/context/context_test.go"
+              ],
+              "findings": [
+                "Functionality: The module constructs an inference payload containing structured system sections and a trimmed conversation transcript. `Builder.Build` aggregates session metadata, generates dynamic sections via `BuildSections` (supporting system, interaction, cognitive, workflow, binding, and repo contexts), and converts `SessionHistory` into messages. `trimMessages` implements a block-based sliding window that preserves tool-call/result pairs and anchors the latest user message to maintain context coherence.",
+                "Issue - Global State: `sections.go` relies on a package-level `defaultRepoCache` (line 13) to fetch repository summaries. This tight coupling hinders testability, prevents dependency injection, and risks concurrency issues if the cache is not thread-safe.",
+                "Issue - Dead Code: `Builder.Build` accepts a `workflow *logs.WorkflowHistory` parameter but explicitly ignores it (`_ = workflow` at `context.go:52`), indicating incomplete implementation or leftover scaffolding.",
+                "Issue - Hardcoded Limits: `trimMessages` defaults to `MaxMessages = 12` (`context.go:58`) when not configured. This rigid limit may truncate valuable context for complex tasks and lacks session-level configurability.",
+                "Issue - Deprecated Hashing: `HashContent` uses SHA-1 (`context.go:237`), which is cryptographically deprecated. Even for non-security checksums, it is generally discouraged in modern codebases.",
+                "Recommendation - Dependency Injection: Refactor `BuildSections` to accept a `RepoContextCache` interface or embed it within a `ContextBuilder` struct. This eliminates global state and enables deterministic testing.",
+                "Recommendation - Interface Abstraction: Introduce interfaces for `SessionHistory` and `WorkflowHistory` to decouple the `context` package from the concrete `logs` types, improving modularity and mockability.",
+                "Recommendation - Configuration Externalization: Allow `MaxMessages` and trimming behavior to be configured per-agent or per-session via the `Builder` or `Payload` options, rather than relying on hardcoded fallbacks.",
+                "Recommendation - Hashing Update: Replace SHA-1 with SHA-256 for security compliance, or use a non-cryptographic hash like xxHash if performance is the primary concern."
+              ],
+              "unknowns": [
+                "Implementation details and thread-safety guarantees of `RepoContextCache` in `repo.go`.",
+                "How the `Builder` is instantiated and wired into the inference loop or runner components.",
+                "Test coverage for edge cases in `trimMessages` (e.g., orphaned tool calls, empty history, or blocks exceeding `MaxMessages`)."
+              ],
+              "enough_context": true
+            },
+            "valid_first_try": 1,
+            "valid_after_one_repair": 1,
+            "missing_fields_count": 0,
+            "wrong_type_count": 0,
+            "extra_text_present": 0
+          },
+          "pass_details": {
+            "logic": "any",
+            "branches": [
+              {
+                "clauses": [
+                  {
+                    "metric": "valid_first_try",
+                    "op": "==",
+                    "value": 1
+                  },
+                  {
+                    "metric": "extra_text_present",
+                    "op": "==",
+                    "value": 0
+                  }
+                ],
+                "results": [
+                  true,
+                  true
+                ],
+                "passed": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "benchmark": "control.repo_inspection.forced_report_obedience.v1",
+      "spec_path": "docs/experiments/autoresearch/benchmarks/control.repo_inspection.forced_report_obedience.v1.yaml",
+      "evaluations": [
+        {
+          "raw_run": "docs/experiments/raw_data/2026-06-04T03-46-57Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json",
+          "mode": "bounded_v3",
+          "status": "completed",
+          "passed": false,
+          "metrics": {
+            "discovery_precision": 0.0,
+            "tool_calls": 7,
+            "model_turns": 12,
+            "repair_turns": 2,
+            "forced_reports": 1,
+            "completed": true,
+            "mode": "bounded_v3",
+            "prompt": "Review our implementation of context ofr inferrence in sketch/sketch7 and report how it functions. List any issues you see. Make recommendations on architectural improvements.",
+            "task_artifact": {
+              "relevant_files": [
+                "sketch/sketch7/context/context.go",
+                "sketch/sketch7/context/sections.go",
+                "sketch/sketch7/context/context_test.go"
+              ],
+              "findings": [
+                "Functionality: The module constructs an inference payload containing structured system sections and a trimmed conversation transcript. `Builder.Build` aggregates session metadata, generates dynamic sections via `BuildSections` (supporting system, interaction, cognitive, workflow, binding, and repo contexts), and converts `SessionHistory` into messages. `trimMessages` implements a block-based sliding window that preserves tool-call/result pairs and anchors the latest user message to maintain context coherence.",
+                "Issue - Global State: `sections.go` relies on a package-level `defaultRepoCache` (line 13) to fetch repository summaries. This tight coupling hinders testability, prevents dependency injection, and risks concurrency issues if the cache is not thread-safe.",
+                "Issue - Dead Code: `Builder.Build` accepts a `workflow *logs.WorkflowHistory` parameter but explicitly ignores it (`_ = workflow` at `context.go:52`), indicating incomplete implementation or leftover scaffolding.",
+                "Issue - Hardcoded Limits: `trimMessages` defaults to `MaxMessages = 12` (`context.go:58`) when not configured. This rigid limit may truncate valuable context for complex tasks and lacks session-level configurability.",
+                "Issue - Deprecated Hashing: `HashContent` uses SHA-1 (`context.go:237`), which is cryptographically deprecated. Even for non-security checksums, it is generally discouraged in modern codebases.",
+                "Recommendation - Dependency Injection: Refactor `BuildSections` to accept a `RepoContextCache` interface or embed it within a `ContextBuilder` struct. This eliminates global state and enables deterministic testing.",
+                "Recommendation - Interface Abstraction: Introduce interfaces for `SessionHistory` and `WorkflowHistory` to decouple the `context` package from the concrete `logs` types, improving modularity and mockability.",
+                "Recommendation - Configuration Externalization: Allow `MaxMessages` and trimming behavior to be configured per-agent or per-session via the `Builder` or `Payload` options, rather than relying on hardcoded fallbacks.",
+                "Recommendation - Hashing Update: Replace SHA-1 with SHA-256 for security compliance, or use a non-cryptographic hash like xxHash if performance is the primary concern."
+              ],
+              "unknowns": [
+                "Implementation details and thread-safety guarantees of `RepoContextCache` in `repo.go`.",
+                "How the `Builder` is instantiated and wired into the inference loop or runner components.",
+                "Test coverage for edge cases in `trimMessages` (e.g., orphaned tool calls, empty history, or blocks exceeding `MaxMessages`)."
+              ],
+              "enough_context": true
+            },
+            "post_boundary_tool_calls": 1,
+            "report_emitted_after_boundary": 1,
+            "repaired_in_one_turn": 1,
+            "off_protocol_tool_calls_after_repair": 0,
+            "repair_protocol_violations": 0,
+            "repair_followup_report_present": 1
+          },
+          "pass_details": {
+            "logic": "all",
+            "results": [
+              false,
+              true
+            ],
+            "clauses": [
+              {
+                "metric": "post_boundary_tool_calls",
+                "op": "==",
+                "value": 0
+              },
+              {
+                "metric": "report_emitted_after_boundary",
+                "op": "==",
+                "value": 1
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "benchmark": "control.repo_inspection.repair_obedience.v1",
+      "spec_path": "docs/experiments/autoresearch/benchmarks/control.repo_inspection.repair_obedience.v1.yaml",
+      "evaluations": [
+        {
+          "raw_run": "docs/experiments/raw_data/2026-06-04T03-46-57Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json",
+          "mode": "bounded_v3",
+          "status": "completed",
+          "passed": true,
+          "metrics": {
+            "discovery_precision": 0.0,
+            "tool_calls": 7,
+            "model_turns": 12,
+            "repair_turns": 2,
+            "forced_reports": 1,
+            "completed": true,
+            "mode": "bounded_v3",
+            "prompt": "Review our implementation of context ofr inferrence in sketch/sketch7 and report how it functions. List any issues you see. Make recommendations on architectural improvements.",
+            "task_artifact": {
+              "relevant_files": [
+                "sketch/sketch7/context/context.go",
+                "sketch/sketch7/context/sections.go",
+                "sketch/sketch7/context/context_test.go"
+              ],
+              "findings": [
+                "Functionality: The module constructs an inference payload containing structured system sections and a trimmed conversation transcript. `Builder.Build` aggregates session metadata, generates dynamic sections via `BuildSections` (supporting system, interaction, cognitive, workflow, binding, and repo contexts), and converts `SessionHistory` into messages. `trimMessages` implements a block-based sliding window that preserves tool-call/result pairs and anchors the latest user message to maintain context coherence.",
+                "Issue - Global State: `sections.go` relies on a package-level `defaultRepoCache` (line 13) to fetch repository summaries. This tight coupling hinders testability, prevents dependency injection, and risks concurrency issues if the cache is not thread-safe.",
+                "Issue - Dead Code: `Builder.Build` accepts a `workflow *logs.WorkflowHistory` parameter but explicitly ignores it (`_ = workflow` at `context.go:52`), indicating incomplete implementation or leftover scaffolding.",
+                "Issue - Hardcoded Limits: `trimMessages` defaults to `MaxMessages = 12` (`context.go:58`) when not configured. This rigid limit may truncate valuable context for complex tasks and lacks session-level configurability.",
+                "Issue - Deprecated Hashing: `HashContent` uses SHA-1 (`context.go:237`), which is cryptographically deprecated. Even for non-security checksums, it is generally discouraged in modern codebases.",
+                "Recommendation - Dependency Injection: Refactor `BuildSections` to accept a `RepoContextCache` interface or embed it within a `ContextBuilder` struct. This eliminates global state and enables deterministic testing.",
+                "Recommendation - Interface Abstraction: Introduce interfaces for `SessionHistory` and `WorkflowHistory` to decouple the `context` package from the concrete `logs` types, improving modularity and mockability.",
+                "Recommendation - Configuration Externalization: Allow `MaxMessages` and trimming behavior to be configured per-agent or per-session via the `Builder` or `Payload` options, rather than relying on hardcoded fallbacks.",
+                "Recommendation - Hashing Update: Replace SHA-1 with SHA-256 for security compliance, or use a non-cryptographic hash like xxHash if performance is the primary concern."
+              ],
+              "unknowns": [
+                "Implementation details and thread-safety guarantees of `RepoContextCache` in `repo.go`.",
+                "How the `Builder` is instantiated and wired into the inference loop or runner components.",
+                "Test coverage for edge cases in `trimMessages` (e.g., orphaned tool calls, empty history, or blocks exceeding `MaxMessages`)."
+              ],
+              "enough_context": true
+            },
+            "post_boundary_tool_calls": 1,
+            "report_emitted_after_boundary": 1,
+            "repaired_in_one_turn": 1,
+            "off_protocol_tool_calls_after_repair": 0,
+            "repair_protocol_violations": 0,
+            "repair_followup_report_present": 1
+          },
+          "pass_details": {
+            "logic": "all",
+            "results": [
+              true,
+              true
+            ],
+            "clauses": [
+              {
+                "metric": "repaired_in_one_turn",
+                "op": "==",
+                "value": 1
+              },
+              {
+                "metric": "off_protocol_tool_calls_after_repair",
+                "op": "==",
+                "value": 0
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+Manager tick completed.
+
+Decision:
+- Fresh evidence justified intervention.
+- The line regressed enough that a lightweight health check was not sufficient.
+- No scorer/benchmark bug was found.
+- I tightened variant policy again, focusing on unstable evidence planning.
+
+What I reviewed:
+- `docs/experiments/autoresearch/manager_state.json`
+- `docs/experiments/autoresearch/autoresearch_results.tsv`
+- newest result:
+  - `docs/experiments/autoresearch/results/autoresearch-2026-06-04T07-00-41Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc-tier1.json`
+- newest raw runs:
+  - completed: `docs/experiments/raw_data/2026-06-04T07-00-41Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json`
+  - failed: `docs/experiments/raw_data/2026-06-04T06-43-46Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json`
+- `docs/experiments/autoresearch/variants.yaml`
+
+Assessment:
+- New evidence includes:
+  - one failed live-loop run (`cycle=6`)
+  - one completed run (`cycle=7`) regressing to `2/6`
+- `cycle=7` failures:
+  - `required_files`: fail
+  - `adjacent_integration`: fail
+  - `schema_validity`: fail
+  - `forced_report_obedience`: fail
+- `cycle=7` passes:
+  - `test_coverage`
+  - `repair_obedience`
+
+Behavioral pattern in the new run:
+- It read:
+  - `context.go`
+  - `sections.go`
+  - `context_test.go`
+- It did not read `repo.go`, so required-file coverage regressed again.
+- First forced report used fenced JSON, breaking first-try schema validity.
+- It again emitted post-boundary pseudo tool-call markup.
+- It also listed directory placeholders like `sketch/sketch7/logs/` and `sketch/sketch7/runtime/` as evidence in the first forced report, which is another sign the model is still confusing directory discovery with concrete evidence gathering.
+
+Why this warranted intervention:
+- This is not just one stable unresolved bottleneck anymore; the core evidence set is drifting across runs.
+- The current prompt controls improved some runs, but evidence planning is still unstable:
+  - sometimes `sections.go` is skipped
+  - sometimes `repo.go` is skipped
+  - adjacent-file evidence still never becomes real
+  - directory placeholders still leak into reports
+
+Repo edits made:
+1. Updated `docs/experiments/autoresearch/variants.yaml`
+   - added `no-directory-evidence-v1`
+   - goals:
+     - forbid directory placeholders as evidence
+     - explicitly require `repo.go` when repo-context behavior is discussed
+     - preserve the requirement for one concrete adjacent non-context Go file
+     - reinforce raw-JSON-only final reporting with no fenced JSON or pseudo tool calls
+
+2. Updated `docs/experiments/autoresearch/manager_state.json`
+   - set:
+     - `last_reviewed_at`
+     - `next_meaningful_review_after`
+     - `last_manager_action`
+     - `last_tick_status`
+     - `last_reviewed_results_path`
+   - kept `best_variant_id` as `baseline`
+   - added concise continuity notes about:
+     - cycle 6 failure
+     - cycle 7 regression to 2/6
+     - repo.go dropping out
+     - fenced JSON returning
+     - directory placeholders appearing as evidence
+     - absence of scorer/harness fault
+
+Supervisory continuity:
+- Benchmark family remains useful.
+- Current supervision is now targeting three specific stability failures together:
+  - fixed core evidence set
+  - no directory placeholders
+  - concrete adjacent-file evidence before boundary
+- Next meaningful review should wait for post-intervention runs using the expanded variant set.

@@ -1,0 +1,70 @@
+Manager tick completed.
+
+Assessment:
+- There is enough new evidence to justify intervention.
+- The benchmark family remains useful.
+- No scorer/harness bug is evident from the current artifacts.
+- The current line is not healthy enough to leave alone: some recovery happened, but the same core failure mode persists.
+
+What changed since the last review:
+- New autoresearch rows appeared, including:
+  - two additional failed live-loop rows
+  - one completed `cycle=3` result at `3/6`
+- The latest completed run (`05:45:25Z`) shows:
+  - `required_files`: pass
+  - `test_coverage`: pass
+  - `adjacent_integration`: fail
+  - `schema_validity`: fail
+  - `forced_report_obedience`: fail
+  - `repair_obedience`: pass
+
+Interpretation:
+- This is not flat in the strict sense; required-file coverage has stabilized better than before.
+- But progress is bottlenecked on one recurring behavioral defect:
+  - the model does not spend a pre-boundary turn reading a concrete adjacent non-context Go file
+  - instead, after the boundary/coverage gate, it emits pseudo tool-call markup
+  - it also still wraps first forced-report output in markdown fences, causing first-try schema failure
+
+Trace-level confirmation:
+- Latest raw run shows the model read:
+  - `context.go`
+  - `sections.go`
+  - `repo.go`
+  - `context_test.go`
+- After forced report + coverage gate, it emitted pseudo tool-call text for:
+  - `list_files sketch/sketch7/runtime`
+  - `list_files sketch/sketch7/logs`
+  - `read_file sketch/sketch7/main.go`
+- But it never actually executed a concrete adjacent Go-file read before the boundary.
+- Metrics align with this exactly:
+  - `adjacent_files_read = []`
+  - `valid_first_try = 0`
+  - `post_boundary_tool_calls = 1`
+
+Action taken:
+1. Updated `docs/experiments/autoresearch/variants.yaml`
+   - added `preboundary-adjacent-slot-v1`
+   - purpose:
+     - force explicit six-turn planning
+     - require core context + test coverage by turn 5
+     - reserve the last inspection turn for exactly one concrete adjacent Go file
+     - reinforce raw-JSON-only behavior after the boundary
+
+2. Updated `docs/experiments/autoresearch/manager_state.json`
+   - set:
+     - `last_reviewed_at`
+     - `next_meaningful_review_after`
+     - `last_manager_action`
+     - `last_tick_status`
+     - `last_reviewed_results_path`
+   - kept `best_variant_id` as `baseline`
+   - added concise notes capturing:
+     - new failed rows
+     - latest completed run outcome
+     - repeated root cause
+     - why this is a behavioral/prompt issue rather than a scoring bug
+
+Supervisory continuity:
+- Current direction remains within the same benchmark family.
+- Intervention is now focused on turn allocation, not just message wording.
+- Next meaningful review should wait for results from the newly tightened variant mix.

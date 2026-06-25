@@ -1,0 +1,87 @@
+id: discovery.context_inference.adjacent_integration.v1
+version: 1
+category: discovery
+sub_category: adjacent_integration
+status: draft
+summary: Verify that the model crosses out of the context package into adjacent integration evidence.
+source_basis:
+  - docs/experiments/bounded_task_runner.py
+  - docs/reports/bounded-task-comparison-and-coverage-gating-2026-06-03.md
+prompt: >
+  Review our implementation of context ofr inferrence in sketch/sketch7 and
+  report how it functions. List any issues you see. Make recommendations on
+  architectural improvements.
+setup:
+  harness: bounded_task_runner
+  task_name: repo_inspection
+  mode_candidates:
+    - bounded_v2
+    - bounded_v2a
+    - bounded_v3
+    - plain
+  allowed_tools:
+    - list_files
+    - search_files
+    - read_file
+  repo_root: .
+required_files:
+  - sketch/sketch7/context/context.go
+  - sketch/sketch7/context/sections.go
+useful_files:
+  - sketch/sketch7/context/repo.go
+adjacent_files:
+  - sketch/sketch7/main.go
+  - sketch/sketch7/logs/session.go
+  - sketch/sketch7/runner/loop.go
+required_tests:
+  - sketch/sketch7/context/context_test.go
+metrics:
+  primary:
+    - adjacent_recall
+  secondary:
+    - test_recall
+    - required_recall
+    - turns_to_first_adjacent_read
+    - tool_calls
+thresholds:
+  required_recall: 1.0
+  test_recall: 1.0
+  adjacent_recall: 0.333333
+ranking:
+  gate_first: true
+  primary:
+    - adjacent_recall
+  secondary:
+    - turns_to_first_adjacent_read
+    - tool_calls
+scoring:
+  strategy: gate_first
+  formulas:
+    required_recall: required_files_read / total_required_files
+    test_recall: required_tests_read / total_required_tests
+    adjacent_recall: adjacent_files_read / total_adjacent_files
+observability:
+  event_sources:
+    - raw_run.metrics.read_non_context_go_files
+    - raw_run.metrics.unique_files_read
+  notes:
+    - In current harnesses, read_non_context_go_files is a coarse proxy.
+    - Exact adjacent path reads should be preferred when deriving final metrics.
+pass_condition:
+  all:
+    - metric: required_recall
+      op: ">="
+      value: 1.0
+    - metric: test_recall
+      op: ">="
+      value: 1.0
+    - metric: adjacent_recall
+      op: ">="
+      value: 0.333333
+failure_modes:
+  - Stayed within the local context package only.
+  - Read tests but failed to gather cross-boundary integration evidence.
+  - Used hints or pressure but still synthesized without adjacent support.
+notes:
+  - Threshold is set to one adjacent file read initially (1 of 3).
+  - This can be tightened to 1.0 in later benchmark revisions if stronger coverage is required.

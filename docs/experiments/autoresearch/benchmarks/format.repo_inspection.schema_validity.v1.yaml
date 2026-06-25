@@ -1,0 +1,90 @@
+id: format.repo_inspection.schema_validity.v1
+version: 1
+category: format
+sub_category: schema_validity
+status: draft
+summary: Verify that repo_inspection output matches the required JSON schema.
+source_basis:
+  - docs/experiments/bounded_task_runner.py
+  - docs/reports/bounded-task-inference-experiments-2026-06-02.md
+prompt_mode: fixed_history_or_forced_report
+setup:
+  harness: bounded_task_runner
+  task_name: repo_inspection
+  evaluation_mode:
+    - isolated_format_only
+    - end_to_end_forced_report
+  schema_name: repo_inspection_v1
+  output_contract: json_only
+schema:
+  type: object
+  required:
+    - relevant_files
+    - findings
+    - unknowns
+    - enough_context
+  properties:
+    relevant_files:
+      type: array
+      items:
+        type: string
+    findings:
+      type: array
+      items:
+        type: string
+    unknowns:
+      type: array
+      items:
+        type: string
+    enough_context:
+      type: boolean
+metrics:
+  primary:
+    - valid_first_try
+  secondary:
+    - valid_after_one_repair
+    - missing_fields_count
+    - wrong_type_count
+    - extra_text_present
+thresholds:
+  valid_first_try: 1
+ranking:
+  gate_first: false
+  primary:
+    - valid_first_try
+    - valid_after_one_repair
+  secondary:
+    - missing_fields_count
+    - wrong_type_count
+    - extra_text_present
+scoring:
+  strategy: pass_softpass_fail
+  decision_rule:
+    pass: valid_first_try == 1 and extra_text_present == 0
+    soft_pass: valid_first_try == 0 and valid_after_one_repair == 1
+    fail: otherwise
+  formulas:
+    formatting_score: >
+      1.00 if valid_first_try else 0.70 if valid_after_one_repair else 0.00,
+      minus 0.10 if extra_text_present
+observability:
+  event_sources:
+    - parsed_assistant_completion
+    - schema_validator_output
+    - repair_turn_outcome
+pass_condition:
+  any:
+    - all:
+        - metric: valid_first_try
+          op: "=="
+          value: 1
+        - metric: extra_text_present
+          op: "=="
+          value: 0
+failure_modes:
+  - Returned prose outside the JSON object.
+  - Omitted required keys.
+  - Used wrong field types.
+notes:
+  - This benchmark should eventually be run as a pure format-only benchmark with prebuilt task artifacts.
+  - End-to-end forced-report evaluation is acceptable as an initial proxy.

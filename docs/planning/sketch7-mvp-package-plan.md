@@ -861,6 +861,24 @@ Instead, we should tighten a few targeted semantics:
 - clearer latest-effective semantics for durable context snapshots,
 - and better explanation of what the model actually saw.
 
+One specific near-term need exposed by the anchor workflow experiments is a more robust
+**workflow view renderer** that is abstract across workflows.
+
+The current workflow-state section is still largely hand-shaped around the current
+`conversation_to_execution` workflow and its early-phase checkpoints.
+That is acceptable for the current prototype, but it should not become the long-term shape.
+
+We will eventually want a renderer/projection layer that can, for arbitrary workflows:
+
+- summarize the current state clearly,
+- show completed and remaining checkpoints or milestones,
+- explain planning/readiness or other phase gates,
+- surface likely next transitions,
+- and do so without hardcoding one workflow's semantics into generic context assembly.
+
+This should still remain lighter than a large policy DSL.
+But it should become a real abstraction rather than an ad hoc string formatter tied to one workflow family.
+
 ### Priority 3: clarify harness vs runtime boundary
 
 `main.go` is currently a very useful experiment harness, but sketch7 should increasingly separate:

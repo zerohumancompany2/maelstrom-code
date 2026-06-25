@@ -1,0 +1,35 @@
+Manager tick completed.
+
+What I reviewed:
+- `docs/experiments/autoresearch/manager_state.json`
+- `docs/experiments/autoresearch/autoresearch_results.tsv`
+- latest result artifact under `docs/experiments/autoresearch/results/`
+- `docs/experiments/autoresearch/variants.yaml`
+- latest raw run artifacts under `docs/experiments/raw_data/`
+
+Decision:
+- There was enough new evidence to justify intervention.
+- The harness/scorer does not appear broken.
+- The current line is not yet exhausted, but the first baseline run exposed a specific behavioral failure mode:
+  - pass rate only `3/6`
+  - misses on `required_files`, `adjacent_integration`, and `forced_report_obedience`
+  - raw trace shows the model failed to read an adjacent non-context Go file after the coverage gate and instead emitted pseudo tool-call markup after the boundary message
+
+Repo edits made:
+1. Updated `docs/experiments/autoresearch/variants.yaml`
+   - added new variant: `coverage-and-boundary-guard-v1`
+   - purpose: reinforce “no pseudo tool-call markup after forced-report boundary” and make the coverage followup explicitly require real tool use plus JSON-only final output
+
+2. Updated `docs/experiments/autoresearch/manager_state.json`
+   - set `last_reviewed_at`
+   - set `next_meaningful_review_after`
+   - set `last_manager_action`
+   - set `last_tick_status`
+   - set `last_reviewed_results_path`
+   - kept `best_variant_id` as `baseline`
+   - added concise supervisory notes
+
+Current supervisory stance:
+- Continue the current benchmark family.
+- Let the line progress with the expanded variant set.
+- Next meaningful review is deferred until more evidence accumulates.

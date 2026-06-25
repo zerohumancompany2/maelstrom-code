@@ -1,0 +1,64 @@
+id: synthesis.context_inference.issue_finding.v1
+version: 1
+category: synthesis
+sub_category: issue_finding
+status: draft
+summary: Verify that the model identifies expected issue classes from a fixed evidence bundle and avoids overclaiming.
+source_basis:
+  - docs/reports/bounded-task-inference-experiments-2026-06-02.md
+  - docs/reports/bounded-task-comparison-and-coverage-gating-2026-06-03.md
+prompt_mode: fixed_evidence_bundle
+setup:
+  harness: synthesis_only
+  target_task: context_inference_review
+  required_output_shape: issues_and_recommendations
+expected_issues:
+  - id: unused_workflow_parameter
+    description: Notes that workflow is accepted by Builder.Build but ignored.
+  - id: global_repo_cache_state
+    description: Notes that package-level defaultRepoCache creates hidden shared state / testability / concurrency concerns.
+  - id: hardcoded_workflow_logic
+    description: Notes hardcoded workflow-state handling or coupling in section-building logic.
+expected_recommendations: []
+required_facts: []
+forbidden_claims:
+  - Claims about behavior in callers or runtime integration not supported by the fixed evidence bundle.
+metrics:
+  primary:
+    - issue_recall
+    - issue_precision
+  secondary:
+    - unsupported_claim_count
+thresholds:
+  issue_recall: 0.66
+  unsupported_claim_count: 0
+ranking:
+  gate_first: true
+  primary:
+    - issue_recall
+    - issue_precision
+  secondary:
+    - unsupported_claim_count
+scoring:
+  strategy: synthesis_gate_first
+  formulas:
+    issue_recall: issues_covered / total_expected_issues
+    issue_precision: valid_issues / total_issues_asserted
+observability:
+  event_sources:
+    - assistant final report or synthesis-only output
+  notes:
+    - Initial scoring will likely require rubric-based labeling or explicit expected phrase matching.
+pass_condition:
+  all:
+    - metric: issue_recall
+      op: ">="
+      value: 0.66
+    - metric: unsupported_claim_count
+      op: "=="
+      value: 0
+failure_modes:
+  - Misses core issue classes visible in supplied files.
+  - Generates speculative issue claims from evidence not provided.
+notes:
+  - This benchmark should be separated from discovery to avoid rewarding lucky file reads over actual synthesis quality.

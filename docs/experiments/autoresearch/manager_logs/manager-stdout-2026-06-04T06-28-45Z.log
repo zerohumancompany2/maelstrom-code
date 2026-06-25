@@ -1,0 +1,75 @@
+Manager tick completed.
+
+Decision:
+- New evidence justified intervention.
+- Progress was not healthy enough to simply continue unchanged.
+- No scorer/harness bug was found.
+- I adjusted variant policy to address a newly repeated regression in core-file coverage.
+
+What changed in the new evidence:
+- A new completed result landed:
+  - `docs/experiments/autoresearch/results/autoresearch-2026-06-04T06-24-11Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc-tier1.json`
+- Overall score regressed from the prior `4/6` back to `3/6`.
+- This regression is important because it lost `required_files` again while still failing the usual:
+  - `adjacent_integration`
+  - `forced_report_obedience`
+
+What the latest run shows:
+- Passed:
+  - `test_coverage`
+  - `schema_validity`
+  - `repair_obedience`
+- Failed:
+  - `required_files`
+  - `adjacent_integration`
+  - `forced_report_obedience`
+
+Root cause from raw trace:
+- The model read:
+  - `context.go`
+  - `repo.go`
+  - `context_test.go`
+- It skipped `sections.go` entirely this run.
+- After the coverage gate it again emitted pseudo tool-call markup, this time asking for `main.go`, instead of actually using a real tool step while tools were available.
+- Metrics align with the trace:
+  - `required_recall = 0.6667`
+  - `adjacent_files_read = []`
+  - `post_boundary_tool_calls = 1`
+
+Conclusion:
+- This is a real behavioral regression, not a benchmark bug.
+- The previous prompt/control work improved JSON validity, but it did not stabilize the fixed core-file read set.
+- We now need stronger structure on the pre-boundary read sequence itself.
+
+Repo edits made:
+1. Updated `docs/experiments/autoresearch/variants.yaml`
+   - added `required-file-lockstep-v1`
+   - this variant enforces a fixed pre-summary read order:
+     1. `sketch/sketch7/context/context.go`
+     2. `sketch/sketch7/context/sections.go`
+     3. `sketch/sketch7/context/repo.go`
+     4. `sketch/sketch7/context/context_test.go`
+   - then, if one turn remains, read exactly one adjacent non-context Go file
+   - also reinforces raw-JSON-only output and no pseudo tool-call markup
+
+2. Updated `docs/experiments/autoresearch/manager_state.json`
+   - set:
+     - `last_reviewed_at`
+     - `next_meaningful_review_after`
+     - `last_manager_action`
+     - `last_tick_status`
+     - `last_reviewed_results_path`
+   - kept `best_variant_id` as `baseline`
+   - added concise notes about:
+     - the `cycle=5` regression
+     - the skipped `sections.go`
+     - the recurring adjacent/boundary failure pair
+     - the absence of scoring/harness problems
+
+Supervisory continuity:
+- The benchmark family remains useful.
+- Current supervisory focus has tightened further:
+  - stabilize the mandatory core-file read set
+  - preserve first-try schema validity
+  - still push the model toward one actual adjacent Go-file read before the boundary
+- Next meaningful review should occur after runs that include the new lockstep variant.

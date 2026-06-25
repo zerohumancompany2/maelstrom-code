@@ -1,0 +1,160 @@
+version: 1
+variants:
+  - id: baseline
+    kind: bounded_task_runner_config
+    description: Current bounded_v3 behavior with no prompt/control overrides.
+    mode: bounded_v3
+    overrides: {}
+
+  - id: stronger-coverage-message-v1
+    kind: bounded_task_runner_config
+    description: Make the coverage followup message more explicit about exact next-file targets.
+    mode: bounded_v3
+    overrides:
+      coverage_repair_message_template: |
+        Before reporting, gather the missing evidence explicitly required for this task.
+        Read at least one relevant test file and at least one adjacent non-context Go file.
+        To satisfy adjacent evidence, inspect one of:
+        - sketch/sketch7/main.go
+        - sketch/sketch7/logs/session.go
+        - sketch/sketch7/runner/loop.go
+        Then report with JSON only.
+
+  - id: stricter-bounded-system-v1
+    kind: bounded_task_runner_config
+    description: Tighten the bounded-task system prompt so completion requires satisfying current task evidence expectations.
+    mode: bounded_v3
+    overrides:
+      system_prompt_append: |
+        Evidence sufficiency matters more than early closure.
+        If the runtime says broader evidence is required, inspect the requested files before reporting.
+        Do not treat coverage repair instructions as advisory.
+
+  - id: coverage-and-boundary-guard-v1
+    kind: bounded_task_runner_config
+    description: Reinforce both forced-report boundary obedience and coverage followup handling with explicit no-tool-call JSON guidance.
+    mode: bounded_v3
+    overrides:
+      system_prompt_append: |
+        When the runtime says tool use is over, never emit tool-call markup, XML-like tags, or pseudo-tool requests in assistant text.
+        If a later coverage followup grants one final evidence-gathering step, use the actual tools during that step, then return plain JSON only.
+        After any forced-report or repair instruction, your next assistant message must be the final schema-compliant JSON report.
+      coverage_repair_message_template: |
+        Before reporting, gather the missing evidence explicitly required for this task.
+        Read at least one relevant test file and at least one adjacent non-context Go file.
+        Use actual repository tools for that evidence-gathering step; do not write tool-call markup in your answer.
+        To satisfy adjacent evidence, inspect one of:
+        - sketch/sketch7/main.go
+        - sketch/sketch7/logs/session.go
+        - sketch/sketch7/runner/loop.go
+        After that, return JSON only.
+
+  - id: explicit-adjacent-read-v1
+    kind: bounded_task_runner_config
+    description: Force a concrete adjacent-file read plan so the model spends a turn on a named non-context Go file before the boundary closes.
+    mode: bounded_v3
+    overrides:
+      system_prompt_append: |
+        For repo inspections of a target package, reserve one inspection turn for a relevant adjacent non-package file when nearby integration points are listed.
+        If sketch/sketch7/main.go or another listed adjacent Go file appears relevant, read one before concluding repo inspection.
+        Never respond to coverage followups with pseudo tool markup; use an actual tool call if tools are available, otherwise finalize with JSON using only gathered evidence.
+      coverage_repair_message_template: |
+        Broaden evidence before the final report.
+        You must inspect:
+        1. one relevant test file, and
+        2. one adjacent non-context Go file.
+        Prefer this exact adjacent file first: sketch/sketch7/main.go
+        If that is unavailable, inspect one of:
+        - sketch/sketch7/logs/session.go
+        - sketch/sketch7/runner/loop.go
+        Use actual repository tools only, then return JSON only.
+
+  - id: json-boundary-discipline-v1
+    kind: bounded_task_runner_config
+    description: Target first-try JSON validity and post-boundary discipline while preserving the improved required-file coverage.
+    mode: bounded_v3
+    overrides:
+      system_prompt_append: |
+        During forced-report phases, never wrap JSON in markdown fences.
+        Never emit angle-bracket tool-call markup, pseudo function calls, or directory placeholders as evidence.
+        Only cite files you actually read; listing directories like sketch/sketch7/runtime/ does not count as adjacent evidence.
+        If you still have one inspection turn left before the boundary, spend it on a concrete adjacent Go file rather than another directory listing.
+      coverage_repair_message_template: |
+        Final evidence broadening step:
+        - read one relevant test file if not already read
+        - read one concrete adjacent non-context Go file (not a directory)
+        Preferred order:
+        1. sketch/sketch7/main.go
+        2. sketch/sketch7/runtime/view.go
+        3. sketch/sketch7/logs/session.go
+        Use actual repository tools only.
+        Your final response must be raw JSON only, with no markdown fences or tool-call text.
+
+  - id: preboundary-adjacent-slot-v1
+    kind: bounded_task_runner_config
+    description: Reserve a dedicated final inspection turn for one concrete adjacent Go file before forced report, while reiterating raw-JSON boundary rules.
+    mode: bounded_v3
+    overrides:
+      system_prompt_append: |
+        Plan your six repo-inspection turns explicitly.
+        By turn 5 at the latest, you must have already read the core context files and one test file.
+        Reserve the final available inspection turn for exactly one concrete adjacent non-context Go file.
+        Preferred adjacent file order:
+        1. sketch/sketch7/main.go
+        2. sketch/sketch7/runtime/view.go
+        3. sketch/sketch7/logs/session.go
+        After the boundary, output raw JSON only. Never emit markdown fences or pseudo tool-call markup.
+      coverage_repair_message_template: |
+        Do not list directories or propose tool calls in text.
+        If tools are still available, read exactly one concrete adjacent non-context Go file now:
+        - sketch/sketch7/main.go
+        - or sketch/sketch7/runtime/view.go
+        - or sketch/sketch7/logs/session.go
+        Then return raw JSON only.
+
+  - id: required-file-lockstep-v1
+    kind: bounded_task_runner_config
+    description: Force a fixed read order for core context files before any open-ended analysis, then reserve the last turn for one adjacent non-context Go file.
+    mode: bounded_v3
+    overrides:
+      system_prompt_append: |
+        For this repo-inspection task, use a lockstep read order.
+        Before you summarize anything, you must directly read these files in order:
+        1. sketch/sketch7/context/context.go
+        2. sketch/sketch7/context/sections.go
+        3. sketch/sketch7/context/repo.go
+        4. sketch/sketch7/context/context_test.go
+        If you still have one inspection turn left, use it on exactly one adjacent non-context Go file:
+        - sketch/sketch7/main.go
+        - or sketch/sketch7/runtime/view.go
+        - or sketch/sketch7/logs/session.go
+        Do not replace sections.go with another file. After the boundary, output raw JSON only and never emit pseudo tool-call markup.
+      coverage_repair_message_template: |
+        Evidence repair step:
+        - If sections.go was not actually read, read sketch/sketch7/context/sections.go first.
+        - Then, if tools remain, read exactly one adjacent non-context Go file:
+          * sketch/sketch7/main.go
+          * or sketch/sketch7/runtime/view.go
+          * or sketch/sketch7/logs/session.go
+        Return raw JSON only. Do not emit tool-call text or markdown fences.
+
+  - id: no-directory-evidence-v1
+    kind: bounded_task_runner_config
+    description: Prohibit directory placeholders and require repo.go plus one concrete adjacent Go file in evidence planning.
+    mode: bounded_v3
+    overrides:
+      system_prompt_append: |
+        Only files you actually read count as evidence. Directories like sketch/sketch7/logs/ or sketch/sketch7/runtime/ are never valid relevant_files entries.
+        For this task, repo.go is required evidence alongside context.go, sections.go, and one test file.
+        If you mention repository context internals, you must have read sketch/sketch7/context/repo.go directly.
+        If you have one final inspection turn, spend it on exactly one concrete adjacent non-context Go file, not on listing another directory.
+        After any forced-report boundary, output raw JSON only and never emit fenced JSON or pseudo tool-call markup.
+      coverage_repair_message_template: |
+        Evidence repair step:
+        - Ensure sketch/sketch7/context/repo.go has been read if you mention repository context behavior.
+        - Then read exactly one concrete adjacent non-context Go file:
+          * sketch/sketch7/main.go
+          * or sketch/sketch7/runtime/view.go
+          * or sketch/sketch7/logs/session.go
+        Do not list directories as evidence.
+        Return raw JSON only.

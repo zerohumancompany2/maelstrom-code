@@ -1,0 +1,42 @@
+Manager tick completed.
+
+Assessment:
+- New evidence did arrive: a new results row and a new result/raw-run artifact from the live loop.
+- Progress is flat, not healthy:
+  - baseline remains `3/6`
+  - same failing families persist:
+    - `discovery.context_inference.required_files.v1`
+    - `discovery.context_inference.adjacent_integration.v1`
+    - `control.repo_inspection.forced_report_obedience.v1`
+- No harness/scorer break is indicated:
+  - raw trace and benchmark metrics agree
+  - the run still shows `read_non_context_go_files=false`
+  - and `post_boundary_tool_calls=1`
+
+What changed in the new run:
+- Slight change in file selection: it read `sections.go` instead of `repo.go`
+- But the core failure mode repeated:
+  - no adjacent non-context Go file actually read
+  - after coverage followup it again emitted pseudo tool-call markup instead of using the tool step correctly
+
+Intervention made:
+1. Updated `docs/experiments/autoresearch/variants.yaml`
+   - added `explicit-adjacent-read-v1`
+   - goal: force a concrete adjacent-file read plan before the boundary closes
+   - strongly biases the model toward reading `sketch/sketch7/main.go` as the first adjacent file
+   - also reiterates no pseudo tool-call markup on coverage followups
+
+2. Updated `docs/experiments/autoresearch/manager_state.json`
+   - set:
+     - `last_reviewed_at`
+     - `next_meaningful_review_after`
+     - `last_manager_action`
+     - `last_tick_status`
+     - `last_reviewed_results_path`
+   - kept `best_variant_id` as `baseline`
+   - added notes describing the repeated failure pattern and the new supervisory intervention
+
+Supervisory continuity:
+- Current benchmark family is still useful; no retargeting yet
+- Direction is now more specific: pre-boundary adjacent-file targeting
+- Next meaningful review should wait for post-intervention results

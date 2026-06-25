@@ -1,0 +1,92 @@
+id: discovery.context_inference.evidence_sufficiency.v1
+version: 1
+category: discovery
+sub_category: evidence_sufficiency
+status: draft
+summary: Verify that the run gathers sufficient evidence before final reporting for the context inference review task.
+source_basis:
+  - docs/experiments/autoresearch/README.md
+  - docs/reports/autoresearch-tier1-review-2026-06-04.md
+  - docs/vision.md
+prompt: >
+  Review our implementation of context ofr inferrence in sketch/sketch7 and
+  report how it functions. List any issues you see. Make recommendations on
+  architectural improvements.
+setup:
+  harness: bounded_task_runner
+  task_name: repo_inspection
+  mode_candidates:
+    - bounded_v2
+    - bounded_v2a
+    - bounded_v3
+    - plain
+  allowed_tools:
+    - list_files
+    - search_files
+    - read_file
+  repo_root: .
+required_files:
+  - sketch/sketch7/context/context.go
+  - sketch/sketch7/context/sections.go
+  - sketch/sketch7/context/repo.go
+adjacent_files:
+  - sketch/sketch7/main.go
+  - sketch/sketch7/logs/session.go
+  - sketch/sketch7/runner/loop.go
+required_tests:
+  - sketch/sketch7/context/context_test.go
+metrics:
+  primary:
+    - evidence_sufficiency_pass
+  secondary:
+    - evidence_sufficiency_score
+    - required_recall
+    - test_recall
+    - adjacent_recall
+    - report_completed_pass
+thresholds:
+  required_recall: 1.0
+  test_recall: 1.0
+  adjacent_recall: 0.333333
+  report_completed_pass: 1
+ranking:
+  gate_first: true
+  primary:
+    - evidence_sufficiency_pass
+  secondary:
+    - evidence_sufficiency_score
+    - adjacent_recall
+    - required_recall
+    - test_recall
+scoring:
+  strategy: north_star_gate
+  formulas:
+    evidence_sufficiency_score: >
+      average(
+        evidence_required_coverage_pass,
+        evidence_test_coverage_pass,
+        evidence_adjacent_coverage_pass,
+        report_completed_pass
+      )
+observability:
+  event_sources:
+    - raw_run.metrics.unique_files_read
+    - raw_run.metrics.completed
+    - raw_run.events.assistant_message
+  notes:
+    - This benchmark is the intended north-star metric for the current experiment family.
+    - It measures whether the run gathered sufficient evidence before final reporting.
+    - Control and formatting metrics remain important as guardrails but are not the primary target here.
+pass_condition:
+  all:
+    - metric: evidence_sufficiency_pass
+      op: "=="
+      value: 1
+failure_modes:
+  - Reached a final report without reading all required core files.
+  - Produced a report without reading the relevant test file.
+  - Stayed inside the local package and failed to inspect adjacent integration evidence.
+  - Failed to complete reporting after evidence gathering.
+notes:
+  - This benchmark intentionally collapses several discovery requirements into a single run-level metric.
+  - It is meant to serve as the primary optimization target for the next harness phase.

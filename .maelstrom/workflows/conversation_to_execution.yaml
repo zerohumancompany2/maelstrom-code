@@ -10,10 +10,10 @@ context: >
   before implementation. Support interruption and redirection without losing the
   current work state.
 statechart:
-  initialState: requirements_collection
+  initialState: intake
   states:
-    - name: requirements_collection
-      description: Gather requirements, constraints, success criteria, and open questions from the user.
+    - name: intake
+      description: Understand the incoming request well enough to choose whether to clarify first or orient in the repo first.
       visibleTools:
         - bind_workflow
         - interrupt_session
@@ -23,11 +23,13 @@ statechart:
         - interrupt_session
         - resume_session
       prompt: >
-        Collect the task requirements from the user. Clarify goals, constraints,
-        acceptance criteria, and any ambiguity before moving into repo-oriented work.
+        Understand the incoming task well enough to choose the next step.
+        If this looks like a bugfix or repo-local change, repo orientation may come
+        before clarification. If this looks like greenfield or unclear product work,
+        clarification may come first.
       allowedTriggers:
-        - clarify_requirement
         - begin_repo_orientation
+        - begin_clarification
         - block
 
     - name: repo_orientation
@@ -50,11 +52,32 @@ statechart:
         - interrupt_session
       prompt: >
         Orient in the repository. Identify the files, symbols, and existing behavior
-        relevant to the user's request. Gather enough evidence to produce a concrete plan.
+        relevant to the user's request. Before moving to planning, the workflow must
+        also complete clarification. If important ambiguities remain, transition to clarification.
       allowedTriggers:
         - gather_more_context
-        - draft_plan
-        - return_to_requirements
+        - begin_clarification
+        - start_planning
+        - return_to_intake
+        - block
+
+    - name: clarification
+      description: Ask targeted follow-up questions informed by the task and repository findings.
+      visibleTools:
+        - interrupt_session
+        - resume_session
+      enabledTools:
+        - interrupt_session
+        - resume_session
+      prompt: >
+        Ask focused clarifying questions. Use what is already known from intake and,
+        when available, repo orientation. Before moving to planning, the workflow must
+        also complete repo orientation.
+      allowedTriggers:
+        - continue_clarification
+        - begin_repo_orientation
+        - start_planning
+        - return_to_intake
         - block
 
     - name: planning
@@ -71,12 +94,15 @@ statechart:
         - interrupt_session
       prompt: >
         Produce a concrete implementation plan grounded in the user's requirements
-        and repository evidence. Call out intended edits, validation steps, and risks.
+        and repository evidence. Planning should only begin after both repo orientation
+        and clarification have been completed. Call out intended edits, validation steps,
+        and risks.
       allowedTriggers:
         - revise_plan
         - submit_plan_for_review
         - return_to_repo_orientation
-        - return_to_requirements
+        - return_to_clarification
+        - return_to_intake
         - block
 
     - name: plan_review
@@ -93,7 +119,7 @@ statechart:
       allowedTriggers:
         - approve_plan
         - revise_plan
-        - return_to_requirements
+        - return_to_intake
         - block
 
     - name: implementation
@@ -171,24 +197,48 @@ statechart:
 
   transitions:
     - trigger: clarify_requirement
-      from: requirements_collection
-      to: requirements_collection
+      from: intake
+      to: intake
 
     - trigger: begin_repo_orientation
-      from: requirements_collection
+      from: intake
       to: repo_orientation
+
+    - trigger: begin_clarification
+      from: intake
+      to: clarification
 
     - trigger: gather_more_context
       from: repo_orientation
       to: repo_orientation
 
-    - trigger: return_to_requirements
+    - trigger: begin_clarification
       from: repo_orientation
-      to: requirements_collection
+      to: clarification
 
-    - trigger: draft_plan
+    - trigger: start_planning
       from: repo_orientation
       to: planning
+
+    - trigger: return_to_intake
+      from: repo_orientation
+      to: intake
+
+    - trigger: continue_clarification
+      from: clarification
+      to: clarification
+
+    - trigger: begin_repo_orientation
+      from: clarification
+      to: repo_orientation
+
+    - trigger: start_planning
+      from: clarification
+      to: planning
+
+    - trigger: return_to_intake
+      from: clarification
+      to: intake
 
     - trigger: revise_plan
       from: planning
@@ -198,9 +248,13 @@ statechart:
       from: planning
       to: repo_orientation
 
-    - trigger: return_to_requirements
+    - trigger: return_to_clarification
       from: planning
-      to: requirements_collection
+      to: clarification
+
+    - trigger: return_to_intake
+      from: planning
+      to: intake
 
     - trigger: submit_plan_for_review
       from: planning
@@ -210,9 +264,9 @@ statechart:
       from: plan_review
       to: planning
 
-    - trigger: return_to_requirements
+    - trigger: return_to_intake
       from: plan_review
-      to: requirements_collection
+      to: intake
 
     - trigger: approve_plan
       from: plan_review
@@ -243,7 +297,11 @@ statechart:
       to: done
 
     - trigger: block
-      from: requirements_collection
+      from: intake
+      to: blocked
+
+    - trigger: block
+      from: clarification
       to: blocked
 
     - trigger: block
@@ -268,4 +326,4 @@ statechart:
 
     - trigger: resume
       from: blocked
-      to: requirements_collection
+      to: intake

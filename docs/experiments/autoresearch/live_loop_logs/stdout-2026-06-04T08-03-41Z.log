@@ -1,0 +1,14 @@
+{
+  "returncode": 0,
+  "stdout_log": "docs/experiments/autoresearch/manager_logs/manager-stdout-2026-06-04T08-03-41Z.log",
+  "stderr_log": "docs/experiments/autoresearch/manager_logs/manager-stderr-2026-06-04T08-03-41Z.log",
+  "command": [
+    "opencode",
+    "run",
+    "--session",
+    "ses_16f4cb933ffeOXzQABywn5QmQK",
+    "--dir",
+    "/home/albert/git/maelstrom-v7",
+    "Manager tick for the OpenCode runner-manager in this repository.\n\nYou are resuming the dedicated supervisory session for the autoresearch system in this repo.\nYour job is to act as the runner manager, not the worker model.\n\nAt the start of this tick:\n1. Read `docs/experiments/autoresearch/manager_state.json`.\n2. Inspect the latest autoresearch artifacts, including:\n   - `docs/experiments/autoresearch/autoresearch_results.tsv`\n   - newest files under `docs/experiments/autoresearch/results/`\n   - `docs/experiments/autoresearch/variants.yaml`\n   - any relevant raw run artifacts in `docs/experiments/raw_data/`\n3. Determine whether enough new information exists to justify intervention.\n\nDecision policy:\n- If there is too little new evidence and no infra/scoring problem, do a lightweight health check, update `manager_state.json`, and exit.\n- If the current line is healthy and progressing, allow it to continue and set a future `next_meaningful_review_after`.\n- If progress is flat, adjust variants, benchmark focus, or prompt/control direction.\n- If the benchmark/scorer/harness is broken, patch it.\n- If the current benchmark family is exhausted, retarget to a more useful metric family.\n\nBefore exiting:\n1. Update `docs/experiments/autoresearch/manager_state.json` with:\n   - `last_reviewed_at`\n   - `next_meaningful_review_after`\n   - `last_manager_action`\n   - `last_tick_status`\n   - `best_variant_id` if it changed\n   - concise notes\n2. If you changed experiment direction, variants, or benchmark policy, make those repo edits directly.\n3. Keep the session focused on supervisory continuity. Do not forget that the session itself is a memory channel.\n\nOperator note:\nTriggered by live_loop.py after a bounded experiment batch. Prefer lightweight supervision unless clear intervention is warranted.\n"
+  ]
+}

@@ -1,0 +1,77 @@
+id: discovery.context_inference.required_files.v1
+version: 1
+category: discovery
+sub_category: required_files
+status: draft
+summary: Verify that the model reads the core context inference implementation files.
+source_basis:
+  - docs/experiments/bounded_task_runner.py
+  - docs/reports/bounded-task-inference-experiments-2026-06-02.md
+  - docs/reports/bounded-task-comparison-and-coverage-gating-2026-06-03.md
+prompt: >
+  Review our implementation of context ofr inferrence in sketch/sketch7 and
+  report how it functions. List any issues you see. Make recommendations on
+  architectural improvements.
+setup:
+  harness: bounded_task_runner
+  task_name: repo_inspection
+  mode_candidates:
+    - bounded
+    - bounded_v2
+    - bounded_v2a
+    - bounded_v3
+    - plain
+  allowed_tools:
+    - list_files
+    - search_files
+    - read_file
+  repo_root: .
+required_files:
+  - sketch/sketch7/context/context.go
+  - sketch/sketch7/context/sections.go
+  - sketch/sketch7/context/repo.go
+useful_files: []
+adjacent_files: []
+required_tests: []
+irrelevant_patterns:
+  - "**/*.py"
+  - "docs/**"
+  - "vendor/**"
+metrics:
+  primary:
+    - required_recall
+  secondary:
+    - discovery_precision
+    - tool_calls
+    - first_required_read_turn
+thresholds:
+  required_recall: 1.0
+ranking:
+  gate_first: true
+  primary:
+    - required_recall
+  secondary:
+    - discovery_precision
+    - tool_calls
+scoring:
+  strategy: gate_first
+  formulas:
+    required_recall: required_files_read / total_required_files
+    discovery_precision: relevant_reads / total_reads
+observability:
+  event_sources:
+    - raw_run.events.tool_result
+    - raw_run.metrics.unique_files_read
+  notes:
+    - Prefer exact path matching against unique_files_read when available.
+pass_condition:
+  all:
+    - metric: required_recall
+      op: ">="
+      value: 1.0
+failure_modes:
+  - Did not reach the core context implementation files.
+  - Stayed at directory listing level without reading implementation evidence.
+notes:
+  - This benchmark intentionally scores only the core target-area implementation coverage.
+  - It does not require tests or adjacent integration files; those are separate benchmarks.

@@ -1,0 +1,528 @@
+{
+  "metadata": {
+    "generated_at": "2026-06-04T05:48:23.015516+00:00",
+    "runner": "docs/experiments/autoresearch/run_benchmarks.py",
+    "selected_benchmarks": [
+      "discovery.context_inference.required_files.v1",
+      "discovery.context_inference.test_coverage.v1",
+      "discovery.context_inference.adjacent_integration.v1",
+      "format.repo_inspection.schema_validity.v1",
+      "control.repo_inspection.forced_report_obedience.v1",
+      "control.repo_inspection.repair_obedience.v1"
+    ],
+    "selected_raw_runs": [
+      "docs/experiments/raw_data/2026-06-04T05-45-25Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json"
+    ],
+    "mode_filter": null,
+    "prompt_filter": null
+  },
+  "summary": {
+    "total_benchmarks": 6,
+    "total_evaluations": 6,
+    "total_passed": 3,
+    "overall_pass_rate": 0.5,
+    "benchmarks": [
+      {
+        "benchmark": "discovery.context_inference.required_files.v1",
+        "passed": 1,
+        "total": 1,
+        "pass_rate": 1.0
+      },
+      {
+        "benchmark": "discovery.context_inference.test_coverage.v1",
+        "passed": 1,
+        "total": 1,
+        "pass_rate": 1.0
+      },
+      {
+        "benchmark": "discovery.context_inference.adjacent_integration.v1",
+        "passed": 0,
+        "total": 1,
+        "pass_rate": 0.0
+      },
+      {
+        "benchmark": "format.repo_inspection.schema_validity.v1",
+        "passed": 0,
+        "total": 1,
+        "pass_rate": 0.0
+      },
+      {
+        "benchmark": "control.repo_inspection.forced_report_obedience.v1",
+        "passed": 0,
+        "total": 1,
+        "pass_rate": 0.0
+      },
+      {
+        "benchmark": "control.repo_inspection.repair_obedience.v1",
+        "passed": 1,
+        "total": 1,
+        "pass_rate": 1.0
+      }
+    ]
+  },
+  "results": [
+    {
+      "benchmark": "discovery.context_inference.required_files.v1",
+      "spec_path": "docs/experiments/autoresearch/benchmarks/discovery.context_inference.required_files.v1.yaml",
+      "evaluations": [
+        {
+          "raw_run": "docs/experiments/raw_data/2026-06-04T05-45-25Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json",
+          "mode": "bounded_v3",
+          "status": "completed",
+          "passed": true,
+          "metrics": {
+            "required_files_read": [
+              "sketch/sketch7/context/context.go",
+              "sketch/sketch7/context/repo.go",
+              "sketch/sketch7/context/sections.go"
+            ],
+            "required_recall": 1.0,
+            "first_required_read_turn": 4,
+            "discovery_precision": 0.75,
+            "tool_calls": 7,
+            "model_turns": 12,
+            "repair_turns": 2,
+            "forced_reports": 1,
+            "completed": true,
+            "mode": "bounded_v3",
+            "prompt": "Review our implementation of context ofr inferrence in sketch/sketch7 and report how it functions. List any issues you see. Make recommendations on architectural improvements.",
+            "task_artifact": {
+              "relevant_files": [
+                "sketch/sketch7/context/context.go",
+                "sketch/sketch7/context/sections.go",
+                "sketch/sketch7/context/repo.go",
+                "sketch/sketch7/context/context_test.go"
+              ],
+              "findings": [
+                "Functionality: `Builder.Build` (context.go:52) assembles a `Payload` containing structured `Sections` and a trimmed `Messages` transcript derived from session history logs.",
+                "Functionality: `BuildSections` (sections.go:15) dynamically generates context blocks based on agent projections, supporting static prompts, runtime state derivations (interaction, cognitive, workflow), and cached repository summaries.",
+                "Functionality: `RepoContextCache` (repo.go:23) caches repository summaries and refreshes them based on `InteractionTurnCount`. `trimMessages` (context.go:99) uses block-based logic to keep the latest coherent conversation tail, prioritizing user anchors and grouping tool calls with results.",
+                "Issue: Global State Leakage: `var defaultRepoCache RepoContextCache` (repo.go:13) is a package-level global. This causes cache collisions and state leakage between concurrent sessions or different agents sharing the same process.",
+                "Issue: Inflated Turn Counting: `InteractionTurnCount` (repo.go:107) increments for every log record (user msg, assistant msg, tool call, tool result). This artificially inflates the turn count, causing the repo context cache to refresh far more frequently than intended.",
+                "Issue: Hardcoded Workflow Logic: `workflowProgress` and `suggestedNextTransitions` (sections.go:86, 142) contain hardcoded state sequences (`intake`, `repo_orientation`, etc.), tightly coupling the context builder to a specific workflow implementation and reducing reusability.",
+                "Issue: Brittle Message Trimming: `trimMessages` and `expandLeadingToolExchange` (context.go:99, 190) use complex block manipulation. The `containsBlock` check compares full content strings, which can fail to match if tool outputs vary slightly, potentially dropping necessary context.",
+                "Issue: Dead Code: `HashContent` (context.go:237) is defined but never referenced in the codebase, indicating incomplete implementation or leftover code.",
+                "Recommendation: Inject Dependencies: Replace the global `defaultRepoCache` with an injected cache instance or a `ContextProvider` interface scoped per session/agent to ensure isolation and testability.",
+                "Recommendation: Token-Aware Windowing: Replace the hard message count limit (`MaxMessages`) with a token-aware sliding window or priority-based retention strategy, as LLM context limits are measured in tokens, not message counts.",
+                "Recommendation: Decouple Workflow Logic: Move hardcoded workflow state definitions and transition rules into the agent definition or a separate workflow engine, allowing the context builder to remain generic.",
+                "Recommendation: Async Repo Scanning: `scanRepo` and `gitSummary` (repo.go:121, 215) run synchronously and can block the inference pipeline on large repositories. Consider caching aggressively or running scans asynchronously with fallback to stale data."
+              ],
+              "unknowns": [
+                "How the `Payload` struct is consumed downstream by the provider/runner components.",
+                "The exact schema and constraints of `logs.SessionHistory` and `runtime.SessionView` interfaces.",
+                "Whether the hardcoded workflow states are intended to be universal or if they should be agent-specific.",
+                "Performance benchmarks for `scanRepo` on large monorepos to determine if async scanning is strictly necessary."
+              ],
+              "enough_context": true
+            }
+          },
+          "pass_details": {
+            "logic": "all",
+            "results": [
+              true
+            ],
+            "clauses": [
+              {
+                "metric": "required_recall",
+                "op": ">=",
+                "value": 1.0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "benchmark": "discovery.context_inference.test_coverage.v1",
+      "spec_path": "docs/experiments/autoresearch/benchmarks/discovery.context_inference.test_coverage.v1.yaml",
+      "evaluations": [
+        {
+          "raw_run": "docs/experiments/raw_data/2026-06-04T05-45-25Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json",
+          "mode": "bounded_v3",
+          "status": "completed",
+          "passed": true,
+          "metrics": {
+            "required_tests_read": [
+              "sketch/sketch7/context/context_test.go"
+            ],
+            "test_recall": 1.0,
+            "discovery_precision": 0.25,
+            "tool_calls": 7,
+            "model_turns": 12,
+            "repair_turns": 2,
+            "forced_reports": 1,
+            "completed": true,
+            "mode": "bounded_v3",
+            "prompt": "Review our implementation of context ofr inferrence in sketch/sketch7 and report how it functions. List any issues you see. Make recommendations on architectural improvements.",
+            "task_artifact": {
+              "relevant_files": [
+                "sketch/sketch7/context/context.go",
+                "sketch/sketch7/context/sections.go",
+                "sketch/sketch7/context/repo.go",
+                "sketch/sketch7/context/context_test.go"
+              ],
+              "findings": [
+                "Functionality: `Builder.Build` (context.go:52) assembles a `Payload` containing structured `Sections` and a trimmed `Messages` transcript derived from session history logs.",
+                "Functionality: `BuildSections` (sections.go:15) dynamically generates context blocks based on agent projections, supporting static prompts, runtime state derivations (interaction, cognitive, workflow), and cached repository summaries.",
+                "Functionality: `RepoContextCache` (repo.go:23) caches repository summaries and refreshes them based on `InteractionTurnCount`. `trimMessages` (context.go:99) uses block-based logic to keep the latest coherent conversation tail, prioritizing user anchors and grouping tool calls with results.",
+                "Issue: Global State Leakage: `var defaultRepoCache RepoContextCache` (repo.go:13) is a package-level global. This causes cache collisions and state leakage between concurrent sessions or different agents sharing the same process.",
+                "Issue: Inflated Turn Counting: `InteractionTurnCount` (repo.go:107) increments for every log record (user msg, assistant msg, tool call, tool result). This artificially inflates the turn count, causing the repo context cache to refresh far more frequently than intended.",
+                "Issue: Hardcoded Workflow Logic: `workflowProgress` and `suggestedNextTransitions` (sections.go:86, 142) contain hardcoded state sequences (`intake`, `repo_orientation`, etc.), tightly coupling the context builder to a specific workflow implementation and reducing reusability.",
+                "Issue: Brittle Message Trimming: `trimMessages` and `expandLeadingToolExchange` (context.go:99, 190) use complex block manipulation. The `containsBlock` check compares full content strings, which can fail to match if tool outputs vary slightly, potentially dropping necessary context.",
+                "Issue: Dead Code: `HashContent` (context.go:237) is defined but never referenced in the codebase, indicating incomplete implementation or leftover code.",
+                "Recommendation: Inject Dependencies: Replace the global `defaultRepoCache` with an injected cache instance or a `ContextProvider` interface scoped per session/agent to ensure isolation and testability.",
+                "Recommendation: Token-Aware Windowing: Replace the hard message count limit (`MaxMessages`) with a token-aware sliding window or priority-based retention strategy, as LLM context limits are measured in tokens, not message counts.",
+                "Recommendation: Decouple Workflow Logic: Move hardcoded workflow state definitions and transition rules into the agent definition or a separate workflow engine, allowing the context builder to remain generic.",
+                "Recommendation: Async Repo Scanning: `scanRepo` and `gitSummary` (repo.go:121, 215) run synchronously and can block the inference pipeline on large repositories. Consider caching aggressively or running scans asynchronously with fallback to stale data."
+              ],
+              "unknowns": [
+                "How the `Payload` struct is consumed downstream by the provider/runner components.",
+                "The exact schema and constraints of `logs.SessionHistory` and `runtime.SessionView` interfaces.",
+                "Whether the hardcoded workflow states are intended to be universal or if they should be agent-specific.",
+                "Performance benchmarks for `scanRepo` on large monorepos to determine if async scanning is strictly necessary."
+              ],
+              "enough_context": true
+            }
+          },
+          "pass_details": {
+            "logic": "all",
+            "results": [
+              true
+            ],
+            "clauses": [
+              {
+                "metric": "test_recall",
+                "op": ">=",
+                "value": 1.0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "benchmark": "discovery.context_inference.adjacent_integration.v1",
+      "spec_path": "docs/experiments/autoresearch/benchmarks/discovery.context_inference.adjacent_integration.v1.yaml",
+      "evaluations": [
+        {
+          "raw_run": "docs/experiments/raw_data/2026-06-04T05-45-25Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json",
+          "mode": "bounded_v3",
+          "status": "completed",
+          "passed": false,
+          "metrics": {
+            "required_files_read": [
+              "sketch/sketch7/context/context.go",
+              "sketch/sketch7/context/sections.go"
+            ],
+            "required_recall": 1.0,
+            "first_required_read_turn": 4,
+            "useful_files_read": [
+              "sketch/sketch7/context/repo.go"
+            ],
+            "useful_recall": 1.0,
+            "adjacent_files_read": [],
+            "adjacent_recall": 0.0,
+            "required_tests_read": [
+              "sketch/sketch7/context/context_test.go"
+            ],
+            "test_recall": 1.0,
+            "discovery_precision": 1.0,
+            "tool_calls": 7,
+            "model_turns": 12,
+            "repair_turns": 2,
+            "forced_reports": 1,
+            "completed": true,
+            "mode": "bounded_v3",
+            "prompt": "Review our implementation of context ofr inferrence in sketch/sketch7 and report how it functions. List any issues you see. Make recommendations on architectural improvements.",
+            "task_artifact": {
+              "relevant_files": [
+                "sketch/sketch7/context/context.go",
+                "sketch/sketch7/context/sections.go",
+                "sketch/sketch7/context/repo.go",
+                "sketch/sketch7/context/context_test.go"
+              ],
+              "findings": [
+                "Functionality: `Builder.Build` (context.go:52) assembles a `Payload` containing structured `Sections` and a trimmed `Messages` transcript derived from session history logs.",
+                "Functionality: `BuildSections` (sections.go:15) dynamically generates context blocks based on agent projections, supporting static prompts, runtime state derivations (interaction, cognitive, workflow), and cached repository summaries.",
+                "Functionality: `RepoContextCache` (repo.go:23) caches repository summaries and refreshes them based on `InteractionTurnCount`. `trimMessages` (context.go:99) uses block-based logic to keep the latest coherent conversation tail, prioritizing user anchors and grouping tool calls with results.",
+                "Issue: Global State Leakage: `var defaultRepoCache RepoContextCache` (repo.go:13) is a package-level global. This causes cache collisions and state leakage between concurrent sessions or different agents sharing the same process.",
+                "Issue: Inflated Turn Counting: `InteractionTurnCount` (repo.go:107) increments for every log record (user msg, assistant msg, tool call, tool result). This artificially inflates the turn count, causing the repo context cache to refresh far more frequently than intended.",
+                "Issue: Hardcoded Workflow Logic: `workflowProgress` and `suggestedNextTransitions` (sections.go:86, 142) contain hardcoded state sequences (`intake`, `repo_orientation`, etc.), tightly coupling the context builder to a specific workflow implementation and reducing reusability.",
+                "Issue: Brittle Message Trimming: `trimMessages` and `expandLeadingToolExchange` (context.go:99, 190) use complex block manipulation. The `containsBlock` check compares full content strings, which can fail to match if tool outputs vary slightly, potentially dropping necessary context.",
+                "Issue: Dead Code: `HashContent` (context.go:237) is defined but never referenced in the codebase, indicating incomplete implementation or leftover code.",
+                "Recommendation: Inject Dependencies: Replace the global `defaultRepoCache` with an injected cache instance or a `ContextProvider` interface scoped per session/agent to ensure isolation and testability.",
+                "Recommendation: Token-Aware Windowing: Replace the hard message count limit (`MaxMessages`) with a token-aware sliding window or priority-based retention strategy, as LLM context limits are measured in tokens, not message counts.",
+                "Recommendation: Decouple Workflow Logic: Move hardcoded workflow state definitions and transition rules into the agent definition or a separate workflow engine, allowing the context builder to remain generic.",
+                "Recommendation: Async Repo Scanning: `scanRepo` and `gitSummary` (repo.go:121, 215) run synchronously and can block the inference pipeline on large repositories. Consider caching aggressively or running scans asynchronously with fallback to stale data."
+              ],
+              "unknowns": [
+                "How the `Payload` struct is consumed downstream by the provider/runner components.",
+                "The exact schema and constraints of `logs.SessionHistory` and `runtime.SessionView` interfaces.",
+                "Whether the hardcoded workflow states are intended to be universal or if they should be agent-specific.",
+                "Performance benchmarks for `scanRepo` on large monorepos to determine if async scanning is strictly necessary."
+              ],
+              "enough_context": true
+            }
+          },
+          "pass_details": {
+            "logic": "all",
+            "results": [
+              true,
+              true,
+              false
+            ],
+            "clauses": [
+              {
+                "metric": "required_recall",
+                "op": ">=",
+                "value": 1.0
+              },
+              {
+                "metric": "test_recall",
+                "op": ">=",
+                "value": 1.0
+              },
+              {
+                "metric": "adjacent_recall",
+                "op": ">=",
+                "value": 0.333333
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "benchmark": "format.repo_inspection.schema_validity.v1",
+      "spec_path": "docs/experiments/autoresearch/benchmarks/format.repo_inspection.schema_validity.v1.yaml",
+      "evaluations": [
+        {
+          "raw_run": "docs/experiments/raw_data/2026-06-04T05-45-25Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json",
+          "mode": "bounded_v3",
+          "status": "completed",
+          "passed": false,
+          "metrics": {
+            "discovery_precision": 0.0,
+            "tool_calls": 7,
+            "model_turns": 12,
+            "repair_turns": 2,
+            "forced_reports": 1,
+            "completed": true,
+            "mode": "bounded_v3",
+            "prompt": "Review our implementation of context ofr inferrence in sketch/sketch7 and report how it functions. List any issues you see. Make recommendations on architectural improvements.",
+            "task_artifact": {
+              "relevant_files": [
+                "sketch/sketch7/context/context.go",
+                "sketch/sketch7/context/sections.go",
+                "sketch/sketch7/context/repo.go",
+                "sketch/sketch7/context/context_test.go"
+              ],
+              "findings": [
+                "Functionality: `Builder.Build` (context.go:52) assembles a `Payload` containing structured `Sections` and a trimmed `Messages` transcript derived from session history logs.",
+                "Functionality: `BuildSections` (sections.go:15) dynamically generates context blocks based on agent projections, supporting static prompts, runtime state derivations (interaction, cognitive, workflow), and cached repository summaries.",
+                "Functionality: `RepoContextCache` (repo.go:23) caches repository summaries and refreshes them based on `InteractionTurnCount`. `trimMessages` (context.go:99) uses block-based logic to keep the latest coherent conversation tail, prioritizing user anchors and grouping tool calls with results.",
+                "Issue: Global State Leakage: `var defaultRepoCache RepoContextCache` (repo.go:13) is a package-level global. This causes cache collisions and state leakage between concurrent sessions or different agents sharing the same process.",
+                "Issue: Inflated Turn Counting: `InteractionTurnCount` (repo.go:107) increments for every log record (user msg, assistant msg, tool call, tool result). This artificially inflates the turn count, causing the repo context cache to refresh far more frequently than intended.",
+                "Issue: Hardcoded Workflow Logic: `workflowProgress` and `suggestedNextTransitions` (sections.go:86, 142) contain hardcoded state sequences (`intake`, `repo_orientation`, etc.), tightly coupling the context builder to a specific workflow implementation and reducing reusability.",
+                "Issue: Brittle Message Trimming: `trimMessages` and `expandLeadingToolExchange` (context.go:99, 190) use complex block manipulation. The `containsBlock` check compares full content strings, which can fail to match if tool outputs vary slightly, potentially dropping necessary context.",
+                "Issue: Dead Code: `HashContent` (context.go:237) is defined but never referenced in the codebase, indicating incomplete implementation or leftover code.",
+                "Recommendation: Inject Dependencies: Replace the global `defaultRepoCache` with an injected cache instance or a `ContextProvider` interface scoped per session/agent to ensure isolation and testability.",
+                "Recommendation: Token-Aware Windowing: Replace the hard message count limit (`MaxMessages`) with a token-aware sliding window or priority-based retention strategy, as LLM context limits are measured in tokens, not message counts.",
+                "Recommendation: Decouple Workflow Logic: Move hardcoded workflow state definitions and transition rules into the agent definition or a separate workflow engine, allowing the context builder to remain generic.",
+                "Recommendation: Async Repo Scanning: `scanRepo` and `gitSummary` (repo.go:121, 215) run synchronously and can block the inference pipeline on large repositories. Consider caching aggressively or running scans asynchronously with fallback to stale data."
+              ],
+              "unknowns": [
+                "How the `Payload` struct is consumed downstream by the provider/runner components.",
+                "The exact schema and constraints of `logs.SessionHistory` and `runtime.SessionView` interfaces.",
+                "Whether the hardcoded workflow states are intended to be universal or if they should be agent-specific.",
+                "Performance benchmarks for `scanRepo` on large monorepos to determine if async scanning is strictly necessary."
+              ],
+              "enough_context": true
+            },
+            "valid_first_try": 0,
+            "valid_after_one_repair": 1,
+            "missing_fields_count": 0,
+            "wrong_type_count": 0,
+            "extra_text_present": 1
+          },
+          "pass_details": {
+            "logic": "any",
+            "branches": [
+              {
+                "clauses": [
+                  {
+                    "metric": "valid_first_try",
+                    "op": "==",
+                    "value": 1
+                  },
+                  {
+                    "metric": "extra_text_present",
+                    "op": "==",
+                    "value": 0
+                  }
+                ],
+                "results": [
+                  false,
+                  false
+                ],
+                "passed": false
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "benchmark": "control.repo_inspection.forced_report_obedience.v1",
+      "spec_path": "docs/experiments/autoresearch/benchmarks/control.repo_inspection.forced_report_obedience.v1.yaml",
+      "evaluations": [
+        {
+          "raw_run": "docs/experiments/raw_data/2026-06-04T05-45-25Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json",
+          "mode": "bounded_v3",
+          "status": "completed",
+          "passed": false,
+          "metrics": {
+            "discovery_precision": 0.0,
+            "tool_calls": 7,
+            "model_turns": 12,
+            "repair_turns": 2,
+            "forced_reports": 1,
+            "completed": true,
+            "mode": "bounded_v3",
+            "prompt": "Review our implementation of context ofr inferrence in sketch/sketch7 and report how it functions. List any issues you see. Make recommendations on architectural improvements.",
+            "task_artifact": {
+              "relevant_files": [
+                "sketch/sketch7/context/context.go",
+                "sketch/sketch7/context/sections.go",
+                "sketch/sketch7/context/repo.go",
+                "sketch/sketch7/context/context_test.go"
+              ],
+              "findings": [
+                "Functionality: `Builder.Build` (context.go:52) assembles a `Payload` containing structured `Sections` and a trimmed `Messages` transcript derived from session history logs.",
+                "Functionality: `BuildSections` (sections.go:15) dynamically generates context blocks based on agent projections, supporting static prompts, runtime state derivations (interaction, cognitive, workflow), and cached repository summaries.",
+                "Functionality: `RepoContextCache` (repo.go:23) caches repository summaries and refreshes them based on `InteractionTurnCount`. `trimMessages` (context.go:99) uses block-based logic to keep the latest coherent conversation tail, prioritizing user anchors and grouping tool calls with results.",
+                "Issue: Global State Leakage: `var defaultRepoCache RepoContextCache` (repo.go:13) is a package-level global. This causes cache collisions and state leakage between concurrent sessions or different agents sharing the same process.",
+                "Issue: Inflated Turn Counting: `InteractionTurnCount` (repo.go:107) increments for every log record (user msg, assistant msg, tool call, tool result). This artificially inflates the turn count, causing the repo context cache to refresh far more frequently than intended.",
+                "Issue: Hardcoded Workflow Logic: `workflowProgress` and `suggestedNextTransitions` (sections.go:86, 142) contain hardcoded state sequences (`intake`, `repo_orientation`, etc.), tightly coupling the context builder to a specific workflow implementation and reducing reusability.",
+                "Issue: Brittle Message Trimming: `trimMessages` and `expandLeadingToolExchange` (context.go:99, 190) use complex block manipulation. The `containsBlock` check compares full content strings, which can fail to match if tool outputs vary slightly, potentially dropping necessary context.",
+                "Issue: Dead Code: `HashContent` (context.go:237) is defined but never referenced in the codebase, indicating incomplete implementation or leftover code.",
+                "Recommendation: Inject Dependencies: Replace the global `defaultRepoCache` with an injected cache instance or a `ContextProvider` interface scoped per session/agent to ensure isolation and testability.",
+                "Recommendation: Token-Aware Windowing: Replace the hard message count limit (`MaxMessages`) with a token-aware sliding window or priority-based retention strategy, as LLM context limits are measured in tokens, not message counts.",
+                "Recommendation: Decouple Workflow Logic: Move hardcoded workflow state definitions and transition rules into the agent definition or a separate workflow engine, allowing the context builder to remain generic.",
+                "Recommendation: Async Repo Scanning: `scanRepo` and `gitSummary` (repo.go:121, 215) run synchronously and can block the inference pipeline on large repositories. Consider caching aggressively or running scans asynchronously with fallback to stale data."
+              ],
+              "unknowns": [
+                "How the `Payload` struct is consumed downstream by the provider/runner components.",
+                "The exact schema and constraints of `logs.SessionHistory` and `runtime.SessionView` interfaces.",
+                "Whether the hardcoded workflow states are intended to be universal or if they should be agent-specific.",
+                "Performance benchmarks for `scanRepo` on large monorepos to determine if async scanning is strictly necessary."
+              ],
+              "enough_context": true
+            },
+            "post_boundary_tool_calls": 1,
+            "report_emitted_after_boundary": 1,
+            "repaired_in_one_turn": 1,
+            "off_protocol_tool_calls_after_repair": 0,
+            "repair_protocol_violations": 0,
+            "repair_followup_report_present": 1
+          },
+          "pass_details": {
+            "logic": "all",
+            "results": [
+              false,
+              true
+            ],
+            "clauses": [
+              {
+                "metric": "post_boundary_tool_calls",
+                "op": "==",
+                "value": 0
+              },
+              {
+                "metric": "report_emitted_after_boundary",
+                "op": "==",
+                "value": 1
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "benchmark": "control.repo_inspection.repair_obedience.v1",
+      "spec_path": "docs/experiments/autoresearch/benchmarks/control.repo_inspection.repair_obedience.v1.yaml",
+      "evaluations": [
+        {
+          "raw_run": "docs/experiments/raw_data/2026-06-04T05-45-25Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json",
+          "mode": "bounded_v3",
+          "status": "completed",
+          "passed": true,
+          "metrics": {
+            "discovery_precision": 0.0,
+            "tool_calls": 7,
+            "model_turns": 12,
+            "repair_turns": 2,
+            "forced_reports": 1,
+            "completed": true,
+            "mode": "bounded_v3",
+            "prompt": "Review our implementation of context ofr inferrence in sketch/sketch7 and report how it functions. List any issues you see. Make recommendations on architectural improvements.",
+            "task_artifact": {
+              "relevant_files": [
+                "sketch/sketch7/context/context.go",
+                "sketch/sketch7/context/sections.go",
+                "sketch/sketch7/context/repo.go",
+                "sketch/sketch7/context/context_test.go"
+              ],
+              "findings": [
+                "Functionality: `Builder.Build` (context.go:52) assembles a `Payload` containing structured `Sections` and a trimmed `Messages` transcript derived from session history logs.",
+                "Functionality: `BuildSections` (sections.go:15) dynamically generates context blocks based on agent projections, supporting static prompts, runtime state derivations (interaction, cognitive, workflow), and cached repository summaries.",
+                "Functionality: `RepoContextCache` (repo.go:23) caches repository summaries and refreshes them based on `InteractionTurnCount`. `trimMessages` (context.go:99) uses block-based logic to keep the latest coherent conversation tail, prioritizing user anchors and grouping tool calls with results.",
+                "Issue: Global State Leakage: `var defaultRepoCache RepoContextCache` (repo.go:13) is a package-level global. This causes cache collisions and state leakage between concurrent sessions or different agents sharing the same process.",
+                "Issue: Inflated Turn Counting: `InteractionTurnCount` (repo.go:107) increments for every log record (user msg, assistant msg, tool call, tool result). This artificially inflates the turn count, causing the repo context cache to refresh far more frequently than intended.",
+                "Issue: Hardcoded Workflow Logic: `workflowProgress` and `suggestedNextTransitions` (sections.go:86, 142) contain hardcoded state sequences (`intake`, `repo_orientation`, etc.), tightly coupling the context builder to a specific workflow implementation and reducing reusability.",
+                "Issue: Brittle Message Trimming: `trimMessages` and `expandLeadingToolExchange` (context.go:99, 190) use complex block manipulation. The `containsBlock` check compares full content strings, which can fail to match if tool outputs vary slightly, potentially dropping necessary context.",
+                "Issue: Dead Code: `HashContent` (context.go:237) is defined but never referenced in the codebase, indicating incomplete implementation or leftover code.",
+                "Recommendation: Inject Dependencies: Replace the global `defaultRepoCache` with an injected cache instance or a `ContextProvider` interface scoped per session/agent to ensure isolation and testability.",
+                "Recommendation: Token-Aware Windowing: Replace the hard message count limit (`MaxMessages`) with a token-aware sliding window or priority-based retention strategy, as LLM context limits are measured in tokens, not message counts.",
+                "Recommendation: Decouple Workflow Logic: Move hardcoded workflow state definitions and transition rules into the agent definition or a separate workflow engine, allowing the context builder to remain generic.",
+                "Recommendation: Async Repo Scanning: `scanRepo` and `gitSummary` (repo.go:121, 215) run synchronously and can block the inference pipeline on large repositories. Consider caching aggressively or running scans asynchronously with fallback to stale data."
+              ],
+              "unknowns": [
+                "How the `Payload` struct is consumed downstream by the provider/runner components.",
+                "The exact schema and constraints of `logs.SessionHistory` and `runtime.SessionView` interfaces.",
+                "Whether the hardcoded workflow states are intended to be universal or if they should be agent-specific.",
+                "Performance benchmarks for `scanRepo` on large monorepos to determine if async scanning is strictly necessary."
+              ],
+              "enough_context": true
+            },
+            "post_boundary_tool_calls": 1,
+            "report_emitted_after_boundary": 1,
+            "repaired_in_one_turn": 1,
+            "off_protocol_tool_calls_after_repair": 0,
+            "repair_protocol_violations": 0,
+            "repair_followup_report_present": 1
+          },
+          "pass_details": {
+            "logic": "all",
+            "results": [
+              true,
+              true
+            ],
+            "clauses": [
+              {
+                "metric": "repaired_in_one_turn",
+                "op": "==",
+                "value": 1
+              },
+              {
+                "metric": "off_protocol_tool_calls_after_repair",
+                "op": "==",
+                "value": 0
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

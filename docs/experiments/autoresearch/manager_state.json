@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "manager_session_id": "ses_16f4cb933ffeOXzQABywn5QmQK",
+  "status": "live_loop_running",
+  "current_objective": "Improve bounded-task benchmark performance through supervised autoresearch",
+  "active_suite": "tier1",
+  "active_variants_file": "docs/experiments/autoresearch/variants.yaml",
+  "best_variant_id": "baseline",
+  "last_reviewed_results_path": "",
+  "last_reviewed_at": "",
+  "next_meaningful_review_after": "",
+  "last_manager_action": "manager tick invoked via wrapper",
+  "last_tick_status": "tick_completed",
+  "notes": [
+    "live_loop cycle=6 status=loop_failed loop_rc=1 manager_rc=not-run",
+    "tick at 2026-06-04T07:05:00.424110+00:00 returncode=0 stdout_log=manager-stdout-2026-06-04T07-05-00Z.log stderr_log=manager-stderr-2026-06-04T07-05-00Z.log",
+    "live_loop cycle=7 status=ok loop_rc=0 manager_rc=0",
+    "tick at 2026-06-04T07:24:24.795272+00:00 returncode=0 stdout_log=manager-stdout-2026-06-04T07-24-24Z.log stderr_log=manager-stderr-2026-06-04T07-24-24Z.log",
+    "live_loop cycle=8 status=ok loop_rc=0 manager_rc=0",
+    "tick at 2026-06-04T07:43:32.608808+00:00 returncode=0 stdout_log=manager-stdout-2026-06-04T07-43-32Z.log stderr_log=manager-stderr-2026-06-04T07-43-32Z.log",
+    "live_loop cycle=9 status=ok loop_rc=0 manager_rc=0",
+    "tick at 2026-06-04T08:03:41.744036+00:00 returncode=0 stdout_log=manager-stdout-2026-06-04T08-03-41Z.log stderr_log=manager-stderr-2026-06-04T08-03-41Z.log",
+    "live_loop cycle=10 status=ok loop_rc=0 manager_rc=0"
+  ],
+  "last_live_loop_at": "2026-06-04T08:03:41.753344+00:00",
+  "last_live_loop_cycle": 10,
+  "last_live_loop_result": {
+    "loop_returncode": 0,
+    "manager_tick_returncode": 0,
+    "cycle_status": "ok"
+  }
+}

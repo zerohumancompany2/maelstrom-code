@@ -1,0 +1,58 @@
+id: workflow.guidance_vs_explicit_state.task_focus.v1
+version: 1
+category: workflow
+sub_category: task_focus
+status: draft
+summary: Compare whether guidance-first workflow rendering keeps the model more task-focused than explicit state-machine rendering.
+source_basis:
+  - docs/reports/sketch7-workflow-control-experiments-2026-06-01.md
+prompt_mode: controlled_workflow_variant_comparison
+setup:
+  harness: sketch7_cli_or_equivalent
+  compared_variants:
+    - guidance_first
+    - explicit_state
+  target_task_family:
+    - repo_orientation
+    - subsystem_review
+observables:
+  - relevant_code_reads
+  - workflow_yaml_reads
+  - control_plane_introspection_mentions
+  - task_relevant_progress
+metrics:
+  primary:
+    - task_focus_score
+  secondary:
+    - workflow_introspection_penalty
+    - relevant_code_read_ratio
+thresholds:
+  task_focus_score: 0.7
+ranking:
+  gate_first: false
+  primary:
+    - task_focus_score
+  secondary:
+    - workflow_introspection_penalty
+scoring:
+  strategy: comparative_rubric
+  formulas:
+    task_focus_score: >
+      weighted combination of relevant code engagement, task progress, and low workflow introspection
+observability:
+  event_sources:
+    - raw session history
+    - tool usage logs
+    - final assistant outputs
+  notes:
+    - This benchmark is comparative and may initially require manual or semi-manual scoring.
+pass_condition:
+  all:
+    - metric: task_focus_score
+      op: ">="
+      value: 0.7
+failure_modes:
+  - Reads workflow machinery instead of task-relevant code.
+  - Becomes meta about orchestration instead of progressing the user task.
+notes:
+  - This benchmark is intended for workflow-rendering experiments, not bounded_task_runner runs.

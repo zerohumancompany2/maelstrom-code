@@ -1,0 +1,87 @@
+id: discovery.context_inference.runner_evidence_sufficiency.v1
+version: 1
+category: discovery
+sub_category: evidence_sufficiency
+status: draft
+summary: Verify that the run gathers enough adjacent runner/provider integration evidence before final reporting.
+source_basis:
+  - docs/experiments/autoresearch/README.md
+  - docs/reports/autoresearch-tier1-review-2026-06-04.md
+  - docs/vision.md
+prompt: >
+  Review our implementation of context ofr inferrence in sketch/sketch7 and
+  report how it functions. List any issues you see. Make recommendations on
+  architectural improvements.
+setup:
+  harness: bounded_task_runner
+  task_name: repo_inspection
+  mode_candidates:
+    - bounded_v2
+    - bounded_v2a
+    - bounded_v3
+    - plain
+  allowed_tools:
+    - list_files
+    - search_files
+    - read_file
+  repo_root: .
+required_files:
+  - sketch/sketch7/context/context.go
+  - sketch/sketch7/context/sections.go
+required_tests:
+  - sketch/sketch7/context/context_test.go
+adjacent_files:
+  - sketch/sketch7/main.go
+  - sketch/sketch7/logs/session.go
+  - sketch/sketch7/logs/workflow.go
+metrics:
+  primary:
+    - evidence_sufficiency_pass
+  secondary:
+    - evidence_sufficiency_score
+    - adjacent_recall
+    - turns_to_first_adjacent_read
+    - tool_calls
+thresholds:
+  required_recall: 1.0
+  test_recall: 1.0
+  adjacent_recall: 0.333333
+  report_completed_pass: 1
+ranking:
+  gate_first: true
+  primary:
+    - evidence_sufficiency_pass
+  secondary:
+    - evidence_sufficiency_score
+    - adjacent_recall
+    - turns_to_first_adjacent_read
+scoring:
+  strategy: north_star_gate
+  formulas:
+    evidence_sufficiency_score: >
+      average(
+        evidence_required_coverage_pass,
+        evidence_test_coverage_pass,
+        evidence_adjacent_coverage_pass,
+        report_completed_pass
+      )
+observability:
+  event_sources:
+    - raw_run.metrics.unique_files_read
+    - raw_run.metrics.completed
+    - raw_run.events.assistant_message
+  notes:
+    - This second north-star benchmark checks whether the run expands into downstream integration evidence.
+    - It is meant to reduce overfitting to only context-local evidence sufficiency.
+pass_condition:
+  all:
+    - metric: evidence_sufficiency_pass
+      op: "=="
+      value: 1
+failure_modes:
+  - Read only local context files and never crossed into downstream integration evidence.
+  - Read tests but failed to inspect any concrete runner, main, or logs integration file.
+  - Completed reporting without enough evidence about how context is consumed.
+notes:
+  - The threshold remains one adjacent integration file for now.
+  - This benchmark is designed to preserve the same north-star metric while broadening task coverage.

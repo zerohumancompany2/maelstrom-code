@@ -1,0 +1,81 @@
+{
+  "metadata": {
+    "generated_at": "2026-06-04T05:04:19.392623+00:00",
+    "loop": "docs/experiments/autoresearch/autoresearch_loop.py",
+    "suite": "tier1",
+    "repo_root": "/home/albert/git/maelstrom-v7",
+    "hours": null,
+    "max_iterations": 1,
+    "notes": "live_loop cycle=2",
+    "ledger": "docs/experiments/autoresearch/autoresearch_results.tsv",
+    "variants_file": "docs/experiments/autoresearch/variants.yaml"
+  },
+  "best_variant_id": "baseline",
+  "successful_iterations": 1,
+  "failed_iterations": 0,
+  "history": [
+    {
+      "iteration": 1,
+      "variant_id": "baseline",
+      "description": "Current bounded_v3 behavior with no prompt/control overrides.",
+      "raw_run": "docs/experiments/raw_data/2026-06-04T05-00-52Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json",
+      "results_path": "/home/albert/git/maelstrom-v7/docs/experiments/autoresearch/results/autoresearch-2026-06-04T05-00-52Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc-tier1.json",
+      "decision": "keep",
+      "summary": {
+        "total_benchmarks": 6,
+        "total_evaluations": 6,
+        "total_passed": 2,
+        "overall_pass_rate": 0.3333333333333333,
+        "benchmarks": [
+          {
+            "benchmark": "discovery.context_inference.required_files.v1",
+            "passed": 0,
+            "total": 1,
+            "pass_rate": 0.0
+          },
+          {
+            "benchmark": "discovery.context_inference.test_coverage.v1",
+            "passed": 1,
+            "total": 1,
+            "pass_rate": 1.0
+          },
+          {
+            "benchmark": "discovery.context_inference.adjacent_integration.v1",
+            "passed": 0,
+            "total": 1,
+            "pass_rate": 0.0
+          },
+          {
+            "benchmark": "format.repo_inspection.schema_validity.v1",
+            "passed": 0,
+            "total": 1,
+            "pass_rate": 0.0
+          },
+          {
+            "benchmark": "control.repo_inspection.forced_report_obedience.v1",
+            "passed": 0,
+            "total": 1,
+            "pass_rate": 0.0
+          },
+          {
+            "benchmark": "control.repo_inspection.repair_obedience.v1",
+            "passed": 1,
+            "total": 1,
+            "pass_rate": 1.0
+          }
+        ]
+      },
+      "runner_excerpt": [
+        "    \"input_tokens\": 40572,",
+        "    \"output_tokens\": 5994,",
+        "    \"total_tokens\": 46566",
+        "  }",
+        "}",
+        "",
+        "raw data: /home/albert/git/maelstrom-v7/docs/experiments/raw_data/2026-06-04T05-00-52Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.json",
+        "text log: /home/albert/git/maelstrom-v7/docs/experiments/raw_data/2026-06-04T05-00-52Z-bounded_v3-review-our-implementation-of-context-ofr-inferrence-in-sketc.log"
+      ],
+      "status": "ok"
+    }
+  ]
+}
