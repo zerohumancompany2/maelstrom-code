@@ -82,21 +82,22 @@ func AggregateSessionStatsByAgentStore(store SessionStore, sessionDir string) (S
 
 func combineSessionStats(a, b SessionStats) SessionStats {
 	combined := SessionStats{
-		SessionID:      a.SessionID,
-		AgentID:        firstNonEmpty(a.AgentID, b.AgentID),
-		RecordCounts:   combineRecordCounts(a.RecordCounts, b.RecordCounts),
-		Output:         combineOutputStats(a.Output, b.Output),
-		Tools:          combineToolStats(a.Tools, b.Tools),
-		Retry:          combineRetryStats(a.Retry, b.Retry),
-		Completion:     combineCompletionStats(a.Completion, b.Completion),
-		ByTool:         combinePerToolStats(a.ByTool, b.ByTool),
-		ByState:        combinePerStateStats(a.ByState, b.ByState),
-		ModelRefs:      combineCountMaps(a.ModelRefs, b.ModelRefs),
-		ProviderRefs:   combineCountMaps(a.ProviderRefs, b.ProviderRefs),
-		StopReasons:    combineCountMaps(a.StopReasons, b.StopReasons),
-		RetryByReason:  combineCountMaps(a.RetryByReason, b.RetryByReason),
-		OutputStatuses: combineCountMaps(a.OutputStatuses, b.OutputStatuses),
-		ParseStatuses:  combineCountMaps(a.ParseStatuses, b.ParseStatuses),
+		SessionID:        a.SessionID,
+		AgentID:          firstNonEmpty(a.AgentID, b.AgentID),
+		RecordCounts:     combineRecordCounts(a.RecordCounts, b.RecordCounts),
+		Output:           combineOutputStats(a.Output, b.Output),
+		Tools:            combineToolStats(a.Tools, b.Tools),
+		Retry:            combineRetryStats(a.Retry, b.Retry),
+		Completion:       combineCompletionStats(a.Completion, b.Completion),
+		ByTool:           combinePerToolStats(a.ByTool, b.ByTool),
+		ByState:          combinePerStateStats(a.ByState, b.ByState),
+		ModelRefs:        combineCountMaps(a.ModelRefs, b.ModelRefs),
+		ProviderRefs:     combineCountMaps(a.ProviderRefs, b.ProviderRefs),
+		StopReasons:      combineCountMaps(a.StopReasons, b.StopReasons),
+		StateExitReasons: combineCountMaps(a.StateExitReasons, b.StateExitReasons),
+		RetryByReason:    combineCountMaps(a.RetryByReason, b.RetryByReason),
+		OutputStatuses:   combineCountMaps(a.OutputStatuses, b.OutputStatuses),
+		ParseStatuses:    combineCountMaps(a.ParseStatuses, b.ParseStatuses),
 	}
 	if combined.SessionID == "" {
 		combined.SessionID = b.SessionID

@@ -56,6 +56,16 @@ func TestParseArgsAcceptsAggregateByAgentWithoutPrompt(t *testing.T) {
 	}
 }
 
+func TestParseArgsAcceptsEvalDeckWithoutPrompt(t *testing.T) {
+	args, err := parseArgs([]string{"--eval-deck", "sketch/sketch7/evals/decks/tiny-readonly.yaml", "--eval-out", "out.jsonl"})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if args.evalDeckPath == "" || args.evalOutputPath != "out.jsonl" {
+		t.Fatalf("args = %+v", args)
+	}
+}
+
 func TestPrintSessionStatsJSONOutputsStructuredPayload(t *testing.T) {
 	stats := logs.SessionStats{
 		SessionID:    "session-200",
@@ -134,11 +144,13 @@ func TestRunWithStatsReadsSavedSessionAndPrintsStats(t *testing.T) {
 
 func TestPrintSessionReportJSONOutputsRecommendations(t *testing.T) {
 	stats := logs.SessionStats{
-		SessionID:  "session-report",
-		Output:     logs.OutputStats{Invalid: 2, MissingRequired: 1},
-		Tools:      logs.ToolStats{InvalidProposals: 1, ExecutionFailures: 1},
-		Retry:      logs.RetryStats{Unrecovered: 1},
-		Completion: logs.CompletionStats{LatestCompleted: false, LatestStopReason: "loop_guard"},
+		SessionID:        "session-report",
+		Output:           logs.OutputStats{Invalid: 2, MissingRequired: 1, ByValidationStatus: map[string]int{"missing_workflow_bucket": 1}, ByParseStatus: map[string]int{"valid_json_wrapped": 1}},
+		Tools:            logs.ToolStats{InvalidProposals: 1, ExecutionFailures: 1},
+		Retry:            logs.RetryStats{Unrecovered: 1},
+		Completion:       logs.CompletionStats{LatestCompleted: false, LatestStopReason: "loop_guard"},
+		StopReasons:      map[string]int{"max_tool_calls": 1},
+		StateExitReasons: map[string]int{"max_tool_calls": 1},
 	}
 	args := cliArgs{showReport: true, statsFormat: "json"}
 	output := captureStdout(t, func() { printSessionReport(stats, args) })
@@ -156,6 +168,26 @@ func TestPrintSessionReportJSONOutputsRecommendations(t *testing.T) {
 	}
 	if !strings.Contains(output, `"loop_guard"`) {
 		t.Fatalf("expected completion information in output, got %s", output)
+	}
+	if !strings.Contains(output, `"bucket_validation_statuses"`) || !strings.Contains(output, `"bound_stop_reasons"`) {
+		t.Fatalf("expected bucket/bound attribution in output, got %s", output)
+	}
+}
+
+func TestReportAttributionIncludesBucketAndBoundGroups(t *testing.T) {
+	stats := logs.SessionStats{
+		Output:           logs.OutputStats{ByValidationStatus: map[string]int{"missing_workflow_bucket": 2, "valid": 1}, ByParseStatus: map[string]int{"valid_json_wrapped": 2, "valid_json": 1}},
+		StopReasons:      map[string]int{"max_tool_calls": 3, "assistant_only": 1},
+		StateExitReasons: map[string]int{"max_tool_calls": 3},
+	}
+	attr := reportAttribution(stats)
+	bucketStatuses, ok := attr["bucket_validation_statuses"].([]countEntry)
+	if !ok || len(bucketStatuses) != 1 || bucketStatuses[0].Key != "missing_workflow_bucket" {
+		t.Fatalf("bucket statuses = %#v", attr["bucket_validation_statuses"])
+	}
+	boundStops, ok := attr["bound_stop_reasons"].([]countEntry)
+	if !ok || len(boundStops) != 1 || boundStops[0].Key != "max_tool_calls" {
+		t.Fatalf("bound stops = %#v", attr["bound_stop_reasons"])
 	}
 }
 

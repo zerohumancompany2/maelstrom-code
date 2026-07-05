@@ -12,6 +12,7 @@ import (
 	"github.com/comalice/inference_sketch/sketch/sketch7/catalog"
 	"github.com/comalice/inference_sketch/sketch/sketch7/compile"
 	"github.com/comalice/inference_sketch/sketch/sketch7/defs"
+	"github.com/comalice/inference_sketch/sketch/sketch7/evals"
 	"github.com/comalice/inference_sketch/sketch/sketch7/logs"
 	"github.com/comalice/inference_sketch/sketch/sketch7/prompt"
 	"github.com/comalice/inference_sketch/sketch/sketch7/provider"
@@ -44,6 +45,17 @@ func run() error {
 		}
 		printAggregateByAgent(report, args)
 		return nil
+	}
+	if strings.TrimSpace(args.evalDeckPath) != "" {
+		providerAdapter, err := providerFromEnv()
+		if err != nil {
+			return err
+		}
+		outputPath := strings.TrimSpace(args.evalOutputPath)
+		if outputPath == "" {
+			outputPath = filepath.Join(".maelstrom", "evals", "latest.jsonl")
+		}
+		return evals.RunDeck(evals.RunnerConfig{DeckPath: args.evalDeckPath, OutputPath: outputPath, Provider: providerAdapter, RootDir: ".", DefaultModelPath: args.modelPath})
 	}
 	memory := catalog.NewMemory()
 	for _, path := range []string{args.modelPath, args.agentPath, args.workflowPath} {
@@ -191,6 +203,8 @@ type cliArgs struct {
 	statsTool        string
 	statsState       string
 	statsFormat      string
+	evalDeckPath     string
+	evalOutputPath   string
 }
 
 func parseArgs(args []string) (cliArgs, error) {
@@ -269,9 +283,24 @@ func parseArgs(args []string) (cliArgs, error) {
 				return cliArgs{}, fmt.Errorf("missing value for --format")
 			}
 			parsed.statsFormat = args[i]
+		case "--eval-deck":
+			i++
+			if i >= len(args) {
+				return cliArgs{}, fmt.Errorf("missing value for --eval-deck")
+			}
+			parsed.evalDeckPath = args[i]
+		case "--eval-out":
+			i++
+			if i >= len(args) {
+				return cliArgs{}, fmt.Errorf("missing value for --eval-out")
+			}
+			parsed.evalOutputPath = args[i]
 		default:
 			return cliArgs{}, fmt.Errorf("unknown argument %q", args[i])
 		}
+	}
+	if strings.TrimSpace(parsed.evalDeckPath) != "" {
+		return parsed, nil
 	}
 	if parsed.prompt == "" && parsed.statePath == "" && parsed.sessionID == "" {
 		if parsed.aggregateByAgent {
@@ -430,6 +459,9 @@ func dominantFailureModes(stats logs.SessionStats) []ReportFailure {
 	if stats.Output.Invalid > 0 {
 		modes = append(modes, ReportFailure{Severity: "high", Layer: "output_contract", Summary: fmt.Sprintf("invalid output contract evaluations: %d", stats.Output.Invalid), Target: topKey(stats.Output.ByValidationStatus)})
 	}
+	if bucketFailureCount(stats.Output.ByValidationStatus) > 0 {
+		modes = append(modes, ReportFailure{Severity: "high", Layer: "output_buckets", Summary: fmt.Sprintf("bucket contract failures: %d", bucketFailureCount(stats.Output.ByValidationStatus)), Target: topBucketFailure(stats.Output.ByValidationStatus)})
+	}
 	if stats.Output.MissingRequired > 0 {
 		modes = append(modes, ReportFailure{Severity: "high", Layer: "output_contract", Summary: fmt.Sprintf("missing required output fields: %d", stats.Output.MissingRequired), Target: topKey(stats.Output.MissingFieldCounts)})
 	}
@@ -445,6 +477,9 @@ func dominantFailureModes(stats logs.SessionStats) []ReportFailure {
 	if stats.Retry.Unrecovered > 0 {
 		modes = append(modes, ReportFailure{Severity: "medium", Layer: "retry", Summary: fmt.Sprintf("unrecovered retries: %d", stats.Retry.Unrecovered), Target: topKey(stats.Retry.Attribution.ByCauseKind)})
 	}
+	if boundStopCount(stats.StopReasons) > 0 {
+		modes = append(modes, ReportFailure{Severity: "medium", Layer: "state_bounds", Summary: fmt.Sprintf("bound-triggered stops: %d", boundStopCount(stats.StopReasons)), Target: topBoundStop(stats.StopReasons)})
+	}
 	if len(modes) == 0 {
 		modes = append(modes, ReportFailure{Severity: "info", Layer: "session", Summary: "no dominant failure modes detected in current session"})
 	}
@@ -455,6 +490,9 @@ func recommendedChanges(stats logs.SessionStats) []ReportRecommendation {
 	changes := []ReportRecommendation{}
 	if stats.Output.Invalid > 0 || stats.Output.MissingRequired > 0 {
 		changes = append(changes, ReportRecommendation{Severity: "high", Layer: "output_contract", Change: "tighten state output projection text and simplify required output fields in state contracts", Files: []string{"sketch/sketch7/prompt/projection.go", "sketch/sketch7/runner/loop.go", "sketch/sketch7/defs/workflow.go"}, Target: topKey(stats.Output.BySchema)})
+	}
+	if bucketFailureCount(stats.Output.ByValidationStatus) > 0 {
+		changes = append(changes, ReportRecommendation{Severity: "high", Layer: "output_buckets", Change: "clarify finalization-mode bucket requirements and keep wrapped cognitive/workflow outputs explicit in task framing", Files: []string{"sketch/sketch7/runner/output_eval.go", "sketch/sketch7/context/sections.go", "docs/planning/sketch7-core-completion-plan.md"}, Target: topBucketFailure(stats.Output.ByValidationStatus)})
 	}
 	if stats.Output.WrongState > 0 {
 		changes = append(changes, ReportRecommendation{Severity: "high", Layer: "state_projection", Change: "improve state-local prompt projection and validate state field more explicitly at the loop boundary", Files: []string{"sketch/sketch7/prompt/projection.go", "sketch/sketch7/runtime/reduce.go", "sketch/sketch7/runner/loop.go"}, Target: topFailingState(stats.ByState)})
@@ -471,6 +509,9 @@ func recommendedChanges(stats logs.SessionStats) []ReportRecommendation {
 	if !stats.Completion.LatestCompleted {
 		changes = append(changes, ReportRecommendation{Severity: "medium", Layer: "loop_completion", Change: "tighten completion signaling and loop stop conditions", Files: []string{"sketch/sketch7/runner/loop.go", "sketch/sketch7/main.go", "sketch/sketch7/runner/loop_test.go"}, Target: stats.Completion.LatestStopReason})
 	}
+	if boundStopCount(stats.StopReasons) > 0 {
+		changes = append(changes, ReportRecommendation{Severity: "medium", Layer: "state_bounds", Change: "review state bounds and finalization thresholds so bounded exits are intentional rather than accidental", Files: []string{"sketch/sketch7/defs/workflow.go", "sketch/sketch7/runtime/reduce.go", "sketch/sketch7/runner/loop.go"}, Target: topBoundStop(stats.StopReasons)})
+	}
 	if len(changes) == 0 {
 		changes = append(changes, ReportRecommendation{Severity: "info", Layer: "eval", Change: "current session looks healthy; next step is to validate against broader eval tasks", Files: []string{"docs/evals.md", "docs/planning/state-scoped-io-contracts-rollout.md"}})
 	}
@@ -480,7 +521,9 @@ func recommendedChanges(stats logs.SessionStats) []ReportRecommendation {
 func printReportAttribution(stats logs.SessionStats) {
 	fmt.Println("attribution:")
 	printTopCountMap("  validation_statuses", stats.Output.ByValidationStatus)
+	printTopCountMap("  bucket_validation_statuses", bucketValidationStatuses(stats.Output.ByValidationStatus))
 	printTopCountMap("  parse_statuses", stats.Output.ByParseStatus)
+	printTopCountMap("  wrapped_parse_statuses", wrappedParseStatuses(stats.Output.ByParseStatus))
 	printTopCountMap("  schemas", stats.Output.BySchema)
 	printTopCountMap("  missing_output_fields", stats.Output.MissingFieldCounts)
 	printTopCountMap("  tool_invalid_reasons", stats.Tools.ByReason)
@@ -488,6 +531,8 @@ func printReportAttribution(stats logs.SessionStats) {
 	printTopCountMap("  retry_tools", stats.Retry.Attribution.ByTool)
 	printTopCountMap("  models", stats.ModelRefs)
 	printTopCountMap("  providers", stats.ProviderRefs)
+	printTopCountMap("  state_exit_reasons", stats.StateExitReasons)
+	printTopCountMap("  bound_stop_reasons", boundStopReasons(stats.StopReasons))
 	if stats.Completion.LatestCognitiveState != "" || stats.Completion.LatestWorkflowState != "" {
 		fmt.Printf("  terminal_state: cognitive=%s workflow=%s iteration=%d\n", stats.Completion.LatestCognitiveState, stats.Completion.LatestWorkflowState, stats.Completion.LatestIteration)
 	}
@@ -507,19 +552,79 @@ func printTopCountMap(label string, values map[string]int) {
 
 func reportAttribution(stats logs.SessionStats) map[string]any {
 	return map[string]any{
-		"validation_statuses":      topCountEntries(stats.Output.ByValidationStatus, 5),
-		"parse_statuses":           topCountEntries(stats.Output.ByParseStatus, 5),
-		"schemas":                  topCountEntries(stats.Output.BySchema, 5),
-		"missing_output_fields":    topCountEntries(stats.Output.MissingFieldCounts, 5),
-		"tool_invalid_reasons":     topCountEntries(stats.Tools.ByReason, 5),
-		"retry_causes":             topCountEntries(stats.Retry.Attribution.ByCauseKind, 5),
-		"retry_tools":              topCountEntries(stats.Retry.Attribution.ByTool, 5),
-		"models":                   topCountEntries(stats.ModelRefs, 5),
-		"providers":                topCountEntries(stats.ProviderRefs, 5),
-		"terminal_cognitive_state": stats.Completion.LatestCognitiveState,
-		"terminal_workflow_state":  stats.Completion.LatestWorkflowState,
-		"terminal_iteration":       stats.Completion.LatestIteration,
+		"validation_statuses":        topCountEntries(stats.Output.ByValidationStatus, 5),
+		"bucket_validation_statuses": topCountEntries(bucketValidationStatuses(stats.Output.ByValidationStatus), 5),
+		"parse_statuses":             topCountEntries(stats.Output.ByParseStatus, 5),
+		"wrapped_parse_statuses":     topCountEntries(wrappedParseStatuses(stats.Output.ByParseStatus), 5),
+		"schemas":                    topCountEntries(stats.Output.BySchema, 5),
+		"missing_output_fields":      topCountEntries(stats.Output.MissingFieldCounts, 5),
+		"tool_invalid_reasons":       topCountEntries(stats.Tools.ByReason, 5),
+		"retry_causes":               topCountEntries(stats.Retry.Attribution.ByCauseKind, 5),
+		"retry_tools":                topCountEntries(stats.Retry.Attribution.ByTool, 5),
+		"models":                     topCountEntries(stats.ModelRefs, 5),
+		"providers":                  topCountEntries(stats.ProviderRefs, 5),
+		"state_exit_reasons":         topCountEntries(stats.StateExitReasons, 5),
+		"bound_stop_reasons":         topCountEntries(boundStopReasons(stats.StopReasons), 5),
+		"terminal_cognitive_state":   stats.Completion.LatestCognitiveState,
+		"terminal_workflow_state":    stats.Completion.LatestWorkflowState,
+		"terminal_iteration":         stats.Completion.LatestIteration,
 	}
+}
+
+func bucketValidationStatuses(values map[string]int) map[string]int {
+	filtered := map[string]int{}
+	for key, count := range values {
+		switch key {
+		case "missing_required_buckets", "missing_cognitive_bucket", "missing_workflow_bucket", "invalid_cognitive_bucket", "invalid_workflow_bucket", "unknown_bucket":
+			filtered[key] = count
+		}
+	}
+	return filtered
+}
+
+func wrappedParseStatuses(values map[string]int) map[string]int {
+	filtered := map[string]int{}
+	for key, count := range values {
+		if key == "valid_json_wrapped" {
+			filtered[key] = count
+		}
+	}
+	return filtered
+}
+
+func boundStopReasons(values map[string]int) map[string]int {
+	filtered := map[string]int{}
+	for key, count := range values {
+		switch key {
+		case "max_tool_calls", "max_wall_time", "max_inference_turns":
+			filtered[key] = count
+		}
+	}
+	return filtered
+}
+
+func bucketFailureCount(values map[string]int) int {
+	total := 0
+	for _, count := range bucketValidationStatuses(values) {
+		total += count
+	}
+	return total
+}
+
+func boundStopCount(values map[string]int) int {
+	total := 0
+	for _, count := range boundStopReasons(values) {
+		total += count
+	}
+	return total
+}
+
+func topBucketFailure(values map[string]int) string {
+	return topKey(bucketValidationStatuses(values))
+}
+
+func topBoundStop(values map[string]int) string {
+	return topKey(boundStopReasons(values))
 }
 
 func topCountEntries(values map[string]int, limit int) []countEntry {

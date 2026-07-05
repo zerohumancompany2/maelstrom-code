@@ -55,6 +55,7 @@ func TestReduceSessionStatsAggregatesRecords(t *testing.T) {
 
 func TestReduceSessionStatsCountsFailures(t *testing.T) {
 	history := NewSessionHistory("session-101")
+	history.Append(StateExitRecord{SessionBaseRecord: history.NextRecord("state_exit"), Chart: "cognitive", StateName: "observe", Reason: "max_tool_calls"})
 	history.Append(OutputContractEvaluationRecord{
 		SessionBaseRecord: history.NextRecord("output_contract_evaluation"),
 		StateName:         "observe",
@@ -86,6 +87,9 @@ func TestReduceSessionStatsCountsFailures(t *testing.T) {
 	}
 	if stats.Completion.Incomplete != 1 || stats.StopReasons["loop_guard"] != 1 {
 		t.Fatalf("completion stats = %+v stop reasons = %+v", stats.Completion, stats.StopReasons)
+	}
+	if stats.StateExitReasons["max_tool_calls"] != 1 {
+		t.Fatalf("state exit reasons = %+v, want max_tool_calls=1", stats.StateExitReasons)
 	}
 	if stats.ByState["observe"].MissingRequired != 1 {
 		t.Fatalf("per-state stats = %+v", stats.ByState)

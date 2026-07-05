@@ -3,21 +3,22 @@ package logs
 import "sort"
 
 type SessionStats struct {
-	SessionID      string                   `json:"session_id"`
-	AgentID        string                   `json:"agent_id"`
-	RecordCounts   RecordCounts             `json:"record_counts"`
-	Output         OutputStats              `json:"output"`
-	Tools          ToolStats                `json:"tools"`
-	Retry          RetryStats               `json:"retry"`
-	Completion     CompletionStats          `json:"completion"`
-	ByTool         map[string]PerToolStats  `json:"by_tool"`
-	ByState        map[string]PerStateStats `json:"by_state"`
-	ModelRefs      map[string]int           `json:"model_refs"`
-	ProviderRefs   map[string]int           `json:"provider_refs"`
-	StopReasons    map[string]int           `json:"stop_reasons"`
-	RetryByReason  map[string]int           `json:"retry_by_reason"`
-	OutputStatuses map[string]int           `json:"output_statuses"`
-	ParseStatuses  map[string]int           `json:"parse_statuses"`
+	SessionID        string                   `json:"session_id"`
+	AgentID          string                   `json:"agent_id"`
+	RecordCounts     RecordCounts             `json:"record_counts"`
+	Output           OutputStats              `json:"output"`
+	Tools            ToolStats                `json:"tools"`
+	Retry            RetryStats               `json:"retry"`
+	Completion       CompletionStats          `json:"completion"`
+	ByTool           map[string]PerToolStats  `json:"by_tool"`
+	ByState          map[string]PerStateStats `json:"by_state"`
+	ModelRefs        map[string]int           `json:"model_refs"`
+	ProviderRefs     map[string]int           `json:"provider_refs"`
+	StopReasons      map[string]int           `json:"stop_reasons"`
+	StateExitReasons map[string]int           `json:"state_exit_reasons"`
+	RetryByReason    map[string]int           `json:"retry_by_reason"`
+	OutputStatuses   map[string]int           `json:"output_statuses"`
+	ParseStatuses    map[string]int           `json:"parse_statuses"`
 }
 
 type RecordCounts struct {
@@ -113,14 +114,15 @@ type retryAttribution struct {
 
 func ReduceSessionStats(history *SessionHistory) SessionStats {
 	stats := SessionStats{
-		ByTool:         map[string]PerToolStats{},
-		ByState:        map[string]PerStateStats{},
-		ModelRefs:      map[string]int{},
-		ProviderRefs:   map[string]int{},
-		StopReasons:    map[string]int{},
-		RetryByReason:  map[string]int{},
-		OutputStatuses: map[string]int{},
-		ParseStatuses:  map[string]int{},
+		ByTool:           map[string]PerToolStats{},
+		ByState:          map[string]PerStateStats{},
+		ModelRefs:        map[string]int{},
+		ProviderRefs:     map[string]int{},
+		StopReasons:      map[string]int{},
+		StateExitReasons: map[string]int{},
+		RetryByReason:    map[string]int{},
+		OutputStatuses:   map[string]int{},
+		ParseStatuses:    map[string]int{},
 		Output: OutputStats{
 			ByValidationStatus: map[string]int{},
 			ByParseStatus:      map[string]int{},
@@ -185,6 +187,10 @@ func ReduceSessionStats(history *SessionHistory) SessionStats {
 		case *CompletionRecord:
 			stats.RecordCounts.Completions++
 			stats = reduceCompletion(stats, *v, latestCognitiveState, latestWorkflowState)
+		case StateExitRecord:
+			incrementIfPresent(stats.StateExitReasons, v.Reason)
+		case *StateExitRecord:
+			incrementIfPresent(stats.StateExitReasons, v.Reason)
 		case CognitiveTransitionRecord:
 			latestCognitiveState = v.ToState
 		case *CognitiveTransitionRecord:
