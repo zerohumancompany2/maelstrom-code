@@ -2,6 +2,8 @@ package provider
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -293,5 +295,43 @@ func TestOpenAICompatibleProviderAppendsUserContinuationAfterAssistantTail(t *te
 	}
 	if !strings.Contains(last["content"].(string), "current task frame") {
 		t.Fatalf("last message = %#v, want task-frame continuation", last)
+	}
+}
+
+func TestToJSONSchemaOmitsRequiredWhenEmpty(t *testing.T) {
+	raw, err := json.Marshal(toJSONSchema(map[string]string{"path": "string"}, nil))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if value, ok := decoded["required"]; ok {
+		t.Fatalf("required = %#v, want omitted so backends do not reject required:null", value)
+	}
+	raw, err = json.Marshal(toJSONSchema(map[string]string{"path": "string"}, []string{"path"}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	required, ok := decoded["required"].([]any)
+	if !ok || len(required) != 1 || required[0] != "path" {
+		t.Fatalf("required = %#v, want [path]", decoded["required"])
+	}
+}
+
+func TestOpenAICompatibleProviderSurfacesInBodyErrorEnvelope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"error":{"message":"Provider returned an empty response","code":502}}`))
+	}))
+	defer server.Close()
+	p := &OpenAICompatibleProvider{BaseURL: server.URL}
+	_, err := p.Send(Request{ModelRef: "test-model", Lines: []RequestLine{{Kind: "prompt", Role: "user", Content: "hi"}}})
+	if err == nil || !strings.Contains(err.Error(), "Provider returned an empty response") {
+		t.Fatalf("err = %v, want in-body provider error surfaced", err)
 	}
 }

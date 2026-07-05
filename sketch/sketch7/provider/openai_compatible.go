@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -73,6 +74,10 @@ func (p *OpenAICompatibleProvider) Send(request Request) (Response, error) {
 	if err != nil {
 		return Response{}, err
 	}
+	debugHTTP := os.Getenv("MAELSTROM_HTTP_DEBUG") != ""
+	if debugHTTP {
+		fmt.Fprintf(os.Stderr, "--- maelstrom http request ---\n%s\n", body)
+	}
 	endpoint := strings.TrimRight(p.BaseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
@@ -100,8 +105,23 @@ func (p *OpenAICompatibleProvider) Send(request Request) (Response, error) {
 	if err != nil {
 		return Response{}, err
 	}
+	if debugHTTP {
+		fmt.Fprintf(os.Stderr, "--- maelstrom http response %d ---\n%s\n", httpResp.StatusCode, respBody)
+	}
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		return Response{}, fmt.Errorf("openai-compatible status %d: %s", httpResp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	// OpenRouter reports upstream provider failures as an in-body error
+	// object with HTTP 200; treating those as empty successes produced
+	// silent missing-output retry loops.
+	var errEnvelope struct {
+		Error *struct {
+			Code    any    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(respBody, &errEnvelope); err == nil && errEnvelope.Error != nil && errEnvelope.Error.Message != "" {
+		return Response{}, fmt.Errorf("openai-compatible provider error %v: %s", errEnvelope.Error.Code, errEnvelope.Error.Message)
 	}
 	var chatResp openAIChatResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
@@ -289,12 +309,16 @@ func toJSONSchema(parameters map[string]string, required []string) map[string]an
 	for name, typ := range parameters {
 		props[name] = map[string]any{"type": normalizeJSONType(typ)}
 	}
-	requiredCopy := append([]string(nil), required...)
-	return map[string]any{
+	schema := map[string]any{
 		"type":       "object",
 		"properties": props,
-		"required":   requiredCopy,
 	}
+	// A nil slice marshals to "required": null, which some backends (e.g.
+	// mistral via DeepInfra) reject with empty responses; omit it instead.
+	if len(required) > 0 {
+		schema["required"] = append([]string(nil), required...)
+	}
+	return schema
 }
 
 func normalizeJSONType(typ string) string {
