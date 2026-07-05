@@ -21,6 +21,10 @@ type Loop struct {
 	Projections []prompt.Projection
 	MaxHistory  int
 	StopToken   string
+	// Deadline is an optional wall-clock watchdog for the whole run. The
+	// check is cooperative (once per iteration), so overshoot is bounded by
+	// one provider call plus tool execution. Zero means no deadline.
+	Deadline time.Time
 }
 
 const hostVersion = "sketch7-dev"
@@ -37,6 +41,11 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: reason})
 			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: reason, Iteration: iteration})
 			return fmt.Errorf("cognitive state bound exceeded: %s", reason)
+		}
+		if !l.Deadline.IsZero() && time.Now().After(l.Deadline) {
+			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: "deadline_exceeded"})
+			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: "deadline_exceeded", Iteration: iteration})
+			return fmt.Errorf("run deadline exceeded")
 		}
 		finalizingCognitive := finalizationMode.IsFinalizing && finalizationMode.RequireCognitive
 		payloadID := sessionHistory.NextBundleID()

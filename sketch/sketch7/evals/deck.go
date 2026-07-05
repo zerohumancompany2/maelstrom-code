@@ -9,20 +9,22 @@ import (
 )
 
 type TaskDeck struct {
-	Name        string     `yaml:"name" json:"name"`
-	Description string     `yaml:"description" json:"description"`
-	Models      []string   `yaml:"models,omitempty" json:"models,omitempty"`
-	Cases       []TaskCase `yaml:"cases" json:"cases"`
+	Name           string     `yaml:"name" json:"name"`
+	Description    string     `yaml:"description" json:"description"`
+	Models         []string   `yaml:"models,omitempty" json:"models,omitempty"`
+	TimeoutSeconds int        `yaml:"timeoutSeconds,omitempty" json:"timeout_seconds,omitempty"`
+	Cases          []TaskCase `yaml:"cases" json:"cases"`
 }
 
 type TaskCase struct {
-	ID           string          `yaml:"id" json:"id"`
-	Prompt       string          `yaml:"prompt" json:"prompt"`
-	AgentPath    string          `yaml:"agent" json:"agent"`
-	WorkflowPath string          `yaml:"workflow,omitempty" json:"workflow,omitempty"`
-	ModelPath    string          `yaml:"model,omitempty" json:"model,omitempty"`
-	Repeats      int             `yaml:"repeats,omitempty" json:"repeats,omitempty"`
-	Eval         SessionEvalCase `yaml:"eval" json:"eval"`
+	ID             string          `yaml:"id" json:"id"`
+	Prompt         string          `yaml:"prompt" json:"prompt"`
+	AgentPath      string          `yaml:"agent" json:"agent"`
+	WorkflowPath   string          `yaml:"workflow,omitempty" json:"workflow,omitempty"`
+	ModelPath      string          `yaml:"model,omitempty" json:"model,omitempty"`
+	Repeats        int             `yaml:"repeats,omitempty" json:"repeats,omitempty"`
+	TimeoutSeconds int             `yaml:"timeoutSeconds,omitempty" json:"timeout_seconds,omitempty"`
+	Eval           SessionEvalCase `yaml:"eval" json:"eval"`
 }
 
 func LoadTaskDeck(path string) (TaskDeck, error) {
@@ -52,6 +54,9 @@ func LoadTaskDeck(path string) (TaskDeck, error) {
 		}
 		if deck.Cases[i].Repeats <= 0 {
 			deck.Cases[i].Repeats = 1
+		}
+		if deck.Cases[i].TimeoutSeconds <= 0 {
+			deck.Cases[i].TimeoutSeconds = deck.TimeoutSeconds
 		}
 		if strings.TrimSpace(deck.Cases[i].Eval.Name) == "" {
 			deck.Cases[i].Eval.Name = deck.Cases[i].ID

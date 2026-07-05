@@ -195,7 +195,7 @@ func runCase(deck TaskDeck, tc TaskCase, modelPath string, repeat int, config Ru
 		record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		return record
 	}
-	loop := runner.Loop{Provider: config.Provider, Tools: toolRegistry, Projections: projections, MaxHistory: maxHistory}
+	loop := runner.Loop{Provider: config.Provider, Tools: toolRegistry, Projections: projections, MaxHistory: maxHistory, Deadline: started.Add(caseTimeout(tc))}
 	sessionHistory := logs.NewSessionHistory(sessionID)
 	sessionHistory.AgentID = agentDef.Name
 	var workflowHistory *logs.WorkflowHistory
@@ -257,6 +257,17 @@ func firstWorkflow(memory *catalog.Memory) (defs.WorkflowDefinition, bool) {
 		return def, true
 	}
 	return defs.WorkflowDefinition{}, false
+}
+
+// defaultCaseTimeout bounds eval cases that set no explicit timeout so a
+// misbehaving provider or runaway loop cannot stall a batch indefinitely.
+const defaultCaseTimeout = 300 * time.Second
+
+func caseTimeout(tc TaskCase) time.Duration {
+	if tc.TimeoutSeconds > 0 {
+		return time.Duration(tc.TimeoutSeconds) * time.Second
+	}
+	return defaultCaseTimeout
 }
 
 func sanitizeID(value string) string {

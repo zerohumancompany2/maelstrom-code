@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/comalice/inference_sketch/sketch/sketch7/defs"
 	"github.com/comalice/inference_sketch/sketch/sketch7/logs"
@@ -362,6 +363,35 @@ func TestLoopRunStopsWhenMaxToolCallsBoundExceeded(t *testing.T) {
 	}
 	if !foundExit || !foundCompletion {
 		t.Fatalf("expected max_tool_calls exit/completion records, got %#v", sessionHistory.Records)
+	}
+}
+
+func TestLoopRunStopsWhenDeadlineExceeded(t *testing.T) {
+	providerScript := &scriptedProvider{responses: []provider.Response{{Outputs: []provider.Output{provider.AssistantOutput{Content: "Done."}}}}}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10, Deadline: time.Now().Add(-time.Second)}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := defs.AgentDefinition{
+		Context:   defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}},
+		Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{Name: "observe", Prompt: "Observe."}}},
+	}
+	sessionHistory := logs.NewSessionHistory("session-deadline")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Inspect."})
+
+	err := loop.Run(agent, agentDef, nil, sessionHistory, nil)
+	if err == nil || !strings.Contains(err.Error(), "deadline") {
+		t.Fatalf("error = %v, want deadline exceeded", err)
+	}
+	if len(providerScript.requests) != 0 {
+		t.Fatalf("provider called %d times, want 0", len(providerScript.requests))
+	}
+	foundCompletion := false
+	for _, record := range sessionHistory.Records {
+		if v, ok := record.(logs.CompletionRecord); ok && v.StopReason == "deadline_exceeded" && !v.Completed {
+			foundCompletion = true
+		}
+	}
+	if !foundCompletion {
+		t.Fatalf("expected deadline_exceeded completion record, got %#v", sessionHistory.Records)
 	}
 }
 

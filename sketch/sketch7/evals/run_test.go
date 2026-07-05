@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/comalice/inference_sketch/sketch/sketch7/provider"
 )
@@ -127,6 +128,34 @@ func TestRunDeckResumeSkipsCompletedRuns(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	if len(lines) != 1 {
 		t.Fatalf("got %d lines after resume, want 1 (no duplicates)", len(lines))
+	}
+}
+
+func TestLoadTaskDeckAppliesTimeoutInheritance(t *testing.T) {
+	tempDir := t.TempDir()
+	deckPath := filepath.Join(tempDir, "deck.yaml")
+	deckRaw := "name: timeouts\ntimeoutSeconds: 120\ncases:\n  - id: inherits\n    agent: agent.yaml\n    prompt: p\n  - id: overrides\n    agent: agent.yaml\n    prompt: p\n    timeoutSeconds: 30\n"
+	if err := os.WriteFile(deckPath, []byte(deckRaw), 0o644); err != nil {
+		t.Fatalf("write deck: %v", err)
+	}
+	deck, err := LoadTaskDeck(deckPath)
+	if err != nil {
+		t.Fatalf("LoadTaskDeck: %v", err)
+	}
+	if deck.Cases[0].TimeoutSeconds != 120 {
+		t.Fatalf("inherited timeout = %d, want 120", deck.Cases[0].TimeoutSeconds)
+	}
+	if deck.Cases[1].TimeoutSeconds != 30 {
+		t.Fatalf("override timeout = %d, want 30", deck.Cases[1].TimeoutSeconds)
+	}
+}
+
+func TestCaseTimeoutDefaults(t *testing.T) {
+	if got := caseTimeout(TaskCase{}); got != defaultCaseTimeout {
+		t.Fatalf("default timeout = %v, want %v", got, defaultCaseTimeout)
+	}
+	if got := caseTimeout(TaskCase{TimeoutSeconds: 30}); got != 30*time.Second {
+		t.Fatalf("explicit timeout = %v, want 30s", got)
 	}
 }
 
