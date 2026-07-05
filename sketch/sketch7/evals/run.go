@@ -71,20 +71,40 @@ func RunDeck(config RunnerConfig) error {
 
 	encoder := json.NewEncoder(f)
 	for _, tc := range deck.Cases {
-		for _, modelPath := range modelPathsFor(deck, tc, config.DefaultModelPath) {
-			for repeat := 1; repeat <= tc.Repeats; repeat++ {
-				runID := runIDFor(deck, tc, modelPath, repeat)
-				if completed[runID] {
-					continue
-				}
-				record := runCase(deck, tc, modelPath, repeat, config)
-				if err := encoder.Encode(record); err != nil {
-					return err
+		for _, agentPath := range agentPathsFor(deck, tc) {
+			for _, modelPath := range modelPathsFor(deck, tc, config.DefaultModelPath) {
+				for repeat := 1; repeat <= tc.Repeats; repeat++ {
+					runID := runIDFor(deck, tc, agentPath, modelPath, repeat)
+					if completed[runID] {
+						continue
+					}
+					record := runCase(deck, tc, agentPath, modelPath, repeat, config)
+					if err := encoder.Encode(record); err != nil {
+						return err
+					}
 				}
 			}
 		}
 	}
 	return nil
+}
+
+// agentPathsFor resolves the agent matrix for a case: an explicit case agent
+// wins, then the deck-level agent list.
+func agentPathsFor(deck TaskDeck, tc TaskCase) []string {
+	if strings.TrimSpace(tc.AgentPath) != "" {
+		return []string{tc.AgentPath}
+	}
+	paths := []string{}
+	for _, path := range deck.Agents {
+		if strings.TrimSpace(path) != "" {
+			paths = append(paths, path)
+		}
+	}
+	if len(paths) > 0 {
+		return paths
+	}
+	return []string{""}
 }
 
 // modelPathsFor resolves the model matrix for a case: an explicit case model
@@ -109,10 +129,16 @@ func modelPathsFor(deck TaskDeck, tc TaskCase, defaultModelPath string) []string
 // empty path (CLI default fallback) labels as "default", so resumed batches
 // assume the default model does not change between invocations.
 func modelLabel(path string) string {
+	return pathLabel(path, "default")
+}
+
+// pathLabel derives a stable run ID component from a file path basename,
+// falling back to the given label for empty paths.
+func pathLabel(path, fallback string) string {
 	base := strings.TrimSpace(filepath.Base(path))
 	base = strings.TrimSuffix(base, filepath.Ext(base))
 	if base == "" || base == "." {
-		return "default"
+		return fallback
 	}
 	return sanitizeID(base)
 }
@@ -134,17 +160,17 @@ func completedRunIDs(path string) (map[string]bool, error) {
 	return completed, nil
 }
 
-func runIDFor(deck TaskDeck, tc TaskCase, modelPath string, repeat int) string {
-	return fmt.Sprintf("%s:%s:%s:%d", sanitizeID(deck.Name), sanitizeID(tc.ID), modelLabel(modelPath), repeat)
+func runIDFor(deck TaskDeck, tc TaskCase, agentPath, modelPath string, repeat int) string {
+	return fmt.Sprintf("%s:%s:%s:%s:%d", sanitizeID(deck.Name), sanitizeID(tc.ID), pathLabel(agentPath, "agent"), modelLabel(modelPath), repeat)
 }
 
-func runCase(deck TaskDeck, tc TaskCase, modelPath string, repeat int, config RunnerConfig) RunRecord {
+func runCase(deck TaskDeck, tc TaskCase, agentPath, modelPath string, repeat int, config RunnerConfig) RunRecord {
 	started := time.Now().UTC()
-	runID := runIDFor(deck, tc, modelPath, repeat)
+	runID := runIDFor(deck, tc, agentPath, modelPath, repeat)
 	sessionID := fmt.Sprintf("eval-%s", runID)
 	record := RunRecord{RunID: runID, DeckName: deck.Name, CaseID: tc.ID, RepeatIndex: repeat, ModelLabel: modelLabel(modelPath), SessionID: sessionID, StartedAt: started.Format(time.RFC3339Nano)}
 	memory := catalog.NewMemory()
-	for _, path := range []string{modelPath, tc.AgentPath, tc.WorkflowPath} {
+	for _, path := range []string{modelPath, agentPath, tc.WorkflowPath} {
 		if strings.TrimSpace(path) == "" {
 			continue
 		}

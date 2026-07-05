@@ -12,6 +12,7 @@ type TaskDeck struct {
 	Name           string     `yaml:"name" json:"name"`
 	Description    string     `yaml:"description" json:"description"`
 	Models         []string   `yaml:"models,omitempty" json:"models,omitempty"`
+	Agents         []string   `yaml:"agents,omitempty" json:"agents,omitempty"`
 	TimeoutSeconds int        `yaml:"timeoutSeconds,omitempty" json:"timeout_seconds,omitempty"`
 	Cases          []TaskCase `yaml:"cases" json:"cases"`
 }
@@ -49,7 +50,7 @@ func LoadTaskDeck(path string) (TaskDeck, error) {
 		if strings.TrimSpace(deck.Cases[i].Prompt) == "" {
 			return TaskDeck{}, fmt.Errorf("case %q missing prompt", deck.Cases[i].ID)
 		}
-		if strings.TrimSpace(deck.Cases[i].AgentPath) == "" {
+		if strings.TrimSpace(deck.Cases[i].AgentPath) == "" && len(deck.Agents) == 0 {
 			return TaskDeck{}, fmt.Errorf("case %q missing agent path", deck.Cases[i].ID)
 		}
 		if deck.Cases[i].Repeats <= 0 {

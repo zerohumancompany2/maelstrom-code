@@ -34,7 +34,12 @@ func writeModelFixture(t *testing.T, path, name string) {
 
 func writeAgentFixture(t *testing.T, path, modelName string) {
 	t.Helper()
-	raw := "apiVersion: maelstrom/v1\nkind: Agent\nname: test-agent\nmodel: " + modelName + "\ntools: []\ncontext:\n  inputBudget: 2000\n  projections:\n    - type: state_task\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      prompt: Return a summary.\n      outputs:\n        schema: cognitive_step_v1\n        requiredFields: [summary]\n  transitions: []\n"
+	writeNamedAgentFixture(t, path, "test-agent", modelName)
+}
+
+func writeNamedAgentFixture(t *testing.T, path, name, modelName string) {
+	t.Helper()
+	raw := "apiVersion: maelstrom/v1\nkind: Agent\nname: " + name + "\nmodel: " + modelName + "\ntools: []\ncontext:\n  inputBudget: 2000\n  projections:\n    - type: state_task\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      prompt: Return a summary.\n      outputs:\n        schema: cognitive_step_v1\n        requiredFields: [summary]\n  transitions: []\n"
 	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
 		t.Fatalf("write agent: %v", err)
 	}
@@ -128,6 +133,54 @@ func TestRunDeckResumeSkipsCompletedRuns(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	if len(lines) != 1 {
 		t.Fatalf("got %d lines after resume, want 1 (no duplicates)", len(lines))
+	}
+}
+
+func TestRunDeckRunsAgentMatrix(t *testing.T) {
+	tempDir := t.TempDir()
+	deckPath := filepath.Join(tempDir, "deck.yaml")
+	modelPath := filepath.Join(tempDir, "model.yaml")
+	agentAPath := filepath.Join(tempDir, "agent-a.yaml")
+	agentBPath := filepath.Join(tempDir, "agent-b.yaml")
+	outputPath := filepath.Join(tempDir, "out.jsonl")
+	writeModelFixture(t, modelPath, "test-model")
+	writeNamedAgentFixture(t, agentAPath, "agent-a", "test-model")
+	writeNamedAgentFixture(t, agentBPath, "agent-b", "test-model")
+	deckRaw := "name: agent-matrix\nagents:\n  - " + agentAPath + "\n  - " + agentBPath + "\ncases:\n  - id: case-1\n    model: " + modelPath + "\n    prompt: Summarize.\n" + smokeDeckEvalBlock
+	if err := os.WriteFile(deckPath, []byte(deckRaw), 0o644); err != nil {
+		t.Fatalf("write deck: %v", err)
+	}
+	config := RunnerConfig{DeckPath: deckPath, OutputPath: outputPath, Provider: smokeProvider(), RootDir: tempDir}
+	if err := RunDeck(config); err != nil {
+		t.Fatalf("RunDeck: %v", err)
+	}
+	records, err := LoadRunRecords(outputPath)
+	if err != nil {
+		t.Fatalf("LoadRunRecords: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("got %d records, want 2 (one per agent)", len(records))
+	}
+	seen := map[string]bool{}
+	for _, record := range records {
+		if record.Error != "" {
+			t.Fatalf("record error = %q", record.Error)
+		}
+		seen[record.AgentID] = true
+	}
+	if !seen["agent-a"] || !seen["agent-b"] {
+		t.Fatalf("agents seen = %v", seen)
+	}
+	// Resume should add nothing.
+	if err := RunDeck(config); err != nil {
+		t.Fatalf("resume RunDeck: %v", err)
+	}
+	records, err = LoadRunRecords(outputPath)
+	if err != nil {
+		t.Fatalf("re-read: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("got %d records after resume, want 2", len(records))
 	}
 }
 
@@ -257,5 +310,33 @@ func TestLoadAutoresearchDeck(t *testing.T) {
 	focus := byID["workflow-task-focus"]
 	if focus.Eval.MaxFilesRead != 6 {
 		t.Fatalf("task focus budget = %d, want 6", focus.Eval.MaxFilesRead)
+	}
+}
+
+func TestLoadPairedReaderBatteryDeck(t *testing.T) {
+	deck, err := LoadTaskDeck(filepath.Join("decks", "paired-reader-battery.yaml"))
+	if err != nil {
+		t.Fatalf("LoadTaskDeck: %v", err)
+	}
+	if len(deck.Agents) != 2 || len(deck.Models) != 1 {
+		t.Fatalf("matrix = agents %v models %v", deck.Agents, deck.Models)
+	}
+	if len(deck.Cases) != 6 {
+		t.Fatalf("got %d cases, want 6", len(deck.Cases))
+	}
+	totalRuns := 0
+	for _, tc := range deck.Cases {
+		if tc.AgentPath != "" {
+			t.Fatalf("case %q sets agent; battery cases must use the deck agent matrix", tc.ID)
+		}
+		totalRuns += tc.Repeats * len(deck.Agents) * len(deck.Models)
+	}
+	if totalRuns != 24 {
+		t.Fatalf("battery size = %d runs, want 24", totalRuns)
+	}
+	for _, pathValue := range append(append([]string{}, deck.Agents...), deck.Models...) {
+		if _, err := os.Stat(filepath.Join("..", "..", "..", pathValue)); err != nil {
+			t.Fatalf("matrix path: %v", err)
+		}
 	}
 }
