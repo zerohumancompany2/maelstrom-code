@@ -1,0 +1,18 @@
+apiVersion: maelstrom/v1
+kind: Model
+name: qwen3.6-27b
+description: Qwen 3.6 27B via OpenRouter; local-class general-instruct contrast to qwen3-coder.
+providers:
+  - name: openrouter
+    modelRef: qwen/qwen3.6-27b
+limits:
+  contextWindow: 262144
+  maxOutputTokens: 8192
+defaults:
+  temperature: 0.0
+  topP: 1.0
+capabilities:
+  tools: true
+  reasoning: false
+  multimodal: false
+  streaming: false

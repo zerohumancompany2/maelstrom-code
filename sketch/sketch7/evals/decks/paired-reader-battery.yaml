@@ -9,9 +9,11 @@ agents:
   - sketch/sketch7/agents/ooda-reader.yaml
 models:
   - sketch/sketch7/models/openrouter-qwen3-coder-30b.yaml
-  - sketch/sketch7/models/openrouter-gemma3-27b.yaml
+  - sketch/sketch7/models/openrouter-qwen3.6-27b.yaml
   - sketch/sketch7/models/openrouter-mistral-small-24b.yaml
   - sketch/sketch7/models/openrouter-nemotron-nano-30b.yaml
+  - sketch/sketch7/models/openrouter-glm-4.7-flash.yaml
+  - sketch/sketch7/models/openrouter-minimax-m2.5.yaml
 timeoutSeconds: 240
 cases:
   - id: discovery-test-coverage

@@ -1,0 +1,18 @@
+apiVersion: maelstrom/v1
+kind: Model
+name: glm-4.7-flash
+description: GLM 4.7 Flash (~30B-class MoE) via OpenRouter; cheapest battery entry, thin hosting (DeepInfra/Venice).
+providers:
+  - name: openrouter
+    modelRef: z-ai/glm-4.7-flash
+limits:
+  contextWindow: 202752
+  maxOutputTokens: 8192
+defaults:
+  temperature: 0.0
+  topP: 1.0
+capabilities:
+  tools: true
+  reasoning: false
+  multimodal: false
+  streaming: false

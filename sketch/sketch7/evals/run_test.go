@@ -318,7 +318,7 @@ func TestLoadPairedReaderBatteryDeck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadTaskDeck: %v", err)
 	}
-	if len(deck.Agents) != 2 || len(deck.Models) != 4 {
+	if len(deck.Agents) != 2 || len(deck.Models) != 6 {
 		t.Fatalf("matrix = agents %v models %v", deck.Agents, deck.Models)
 	}
 	if len(deck.Cases) != 6 {
@@ -331,8 +331,8 @@ func TestLoadPairedReaderBatteryDeck(t *testing.T) {
 		}
 		totalRuns += tc.Repeats * len(deck.Agents) * len(deck.Models)
 	}
-	if totalRuns != 96 {
-		t.Fatalf("battery size = %d runs, want 96", totalRuns)
+	if totalRuns != 144 {
+		t.Fatalf("battery size = %d runs, want 144", totalRuns)
 	}
 	for _, pathValue := range append(append([]string{}, deck.Agents...), deck.Models...) {
 		if _, err := os.Stat(filepath.Join("..", "..", "..", pathValue)); err != nil {

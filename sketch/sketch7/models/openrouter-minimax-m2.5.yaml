@@ -1,0 +1,18 @@
+apiVersion: maelstrom/v1
+kind: Model
+name: minimax-m2.5
+description: MiniMax M2.5 MoE via OpenRouter; interleaved-thinking model run with thinking disabled, broad provider hosting.
+providers:
+  - name: openrouter
+    modelRef: minimax/minimax-m2.5
+limits:
+  contextWindow: 204800
+  maxOutputTokens: 8192
+defaults:
+  temperature: 0.0
+  topP: 1.0
+capabilities:
+  tools: true
+  reasoning: false
+  multimodal: false
+  streaming: false

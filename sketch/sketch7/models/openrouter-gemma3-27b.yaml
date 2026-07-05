@@ -1,7 +1,10 @@
 apiVersion: maelstrom/v1
 kind: Model
 name: gemma3-27b
-description: Gemma 3 27B instruct via OpenRouter; local-class stand-in for eval batteries.
+description: >
+  Gemma 3 27B instruct via OpenRouter. Deferred from batteries: DeepInfra is
+  the only tool-capable OpenRouter host and rate-limits under load; revisit on
+  local inference.
 providers:
   - name: openrouter
     modelRef: google/gemma-3-27b-it
