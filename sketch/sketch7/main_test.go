@@ -66,6 +66,16 @@ func TestParseArgsAcceptsEvalDeckWithoutPrompt(t *testing.T) {
 	}
 }
 
+func TestParseArgsAcceptsEvalSummaryWithoutPrompt(t *testing.T) {
+	args, err := parseArgs([]string{"--eval-summary", "out.jsonl", "--format", "json"})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if args.evalSummaryPath != "out.jsonl" || args.statsFormat != "json" {
+		t.Fatalf("args = %+v", args)
+	}
+}
+
 func TestPrintSessionStatsJSONOutputsStructuredPayload(t *testing.T) {
 	stats := logs.SessionStats{
 		SessionID:    "session-200",

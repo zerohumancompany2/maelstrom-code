@@ -23,7 +23,10 @@ func TestLoadTaskDeckParsesMinimalDeck(t *testing.T) {
 	}
 }
 
-func TestRunDeckWritesJSONLRecord(t *testing.T) {
+// writeSmokeDeckFixture writes a minimal model/agent/deck fixture and returns
+// a RunnerConfig wired to a fake provider.
+func writeSmokeDeckFixture(t *testing.T) RunnerConfig {
+	t.Helper()
 	tempDir := t.TempDir()
 	deckPath := filepath.Join(tempDir, "deck.yaml")
 	modelPath := filepath.Join(tempDir, "model.yaml")
@@ -40,7 +43,13 @@ func TestRunDeckWritesJSONLRecord(t *testing.T) {
 		t.Fatalf("write deck: %v", err)
 	}
 	fakeProvider := &provider.FakeProvider{Response: provider.Response{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"summary":"done"}`}}}}
-	if err := RunDeck(RunnerConfig{DeckPath: deckPath, OutputPath: outputPath, Provider: fakeProvider, RootDir: tempDir}); err != nil {
+	return RunnerConfig{DeckPath: deckPath, OutputPath: outputPath, Provider: fakeProvider, RootDir: tempDir}
+}
+
+func TestRunDeckWritesJSONLRecord(t *testing.T) {
+	config := writeSmokeDeckFixture(t)
+	outputPath := config.OutputPath
+	if err := RunDeck(config); err != nil {
 		t.Fatalf("RunDeck: %v", err)
 	}
 	raw, err := os.ReadFile(outputPath)
@@ -63,5 +72,23 @@ func TestRunDeckWritesJSONLRecord(t *testing.T) {
 	}
 	if record.Eval.Name != "case-1" {
 		t.Fatalf("eval result = %+v", record.Eval)
+	}
+}
+
+func TestRunDeckResumeSkipsCompletedRuns(t *testing.T) {
+	config := writeSmokeDeckFixture(t)
+	if err := RunDeck(config); err != nil {
+		t.Fatalf("first RunDeck: %v", err)
+	}
+	if err := RunDeck(config); err != nil {
+		t.Fatalf("second RunDeck: %v", err)
+	}
+	raw, err := os.ReadFile(config.OutputPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("got %d lines after resume, want 1 (no duplicates)", len(lines))
 	}
 }

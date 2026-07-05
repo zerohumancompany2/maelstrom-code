@@ -46,6 +46,22 @@ func run() error {
 		printAggregateByAgent(report, args)
 		return nil
 	}
+	if strings.TrimSpace(args.evalSummaryPath) != "" {
+		summary, err := evals.SummarizeBatchFile(args.evalSummaryPath)
+		if err != nil {
+			return err
+		}
+		if strings.EqualFold(strings.TrimSpace(args.statsFormat), "json") {
+			raw, err := json.MarshalIndent(summary, "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(raw))
+			return nil
+		}
+		evals.PrintBatchSummary(summary)
+		return nil
+	}
 	if strings.TrimSpace(args.evalDeckPath) != "" {
 		providerAdapter, err := providerFromEnv()
 		if err != nil {
@@ -205,6 +221,7 @@ type cliArgs struct {
 	statsFormat      string
 	evalDeckPath     string
 	evalOutputPath   string
+	evalSummaryPath  string
 }
 
 func parseArgs(args []string) (cliArgs, error) {
@@ -295,11 +312,17 @@ func parseArgs(args []string) (cliArgs, error) {
 				return cliArgs{}, fmt.Errorf("missing value for --eval-out")
 			}
 			parsed.evalOutputPath = args[i]
+		case "--eval-summary":
+			i++
+			if i >= len(args) {
+				return cliArgs{}, fmt.Errorf("missing value for --eval-summary")
+			}
+			parsed.evalSummaryPath = args[i]
 		default:
 			return cliArgs{}, fmt.Errorf("unknown argument %q", args[i])
 		}
 	}
-	if strings.TrimSpace(parsed.evalDeckPath) != "" {
+	if strings.TrimSpace(parsed.evalDeckPath) != "" || strings.TrimSpace(parsed.evalSummaryPath) != "" {
 		return parsed, nil
 	}
 	if parsed.prompt == "" && parsed.statePath == "" && parsed.sessionID == "" {

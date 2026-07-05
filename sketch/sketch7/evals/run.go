@@ -56,6 +56,10 @@ func RunDeck(config RunnerConfig) error {
 	if err := os.MkdirAll(filepath.Dir(config.OutputPath), 0o755); err != nil {
 		return err
 	}
+	completed, err := completedRunIDs(config.OutputPath)
+	if err != nil {
+		return err
+	}
 	f, err := os.OpenFile(config.OutputPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
@@ -65,6 +69,10 @@ func RunDeck(config RunnerConfig) error {
 	encoder := json.NewEncoder(f)
 	for _, tc := range deck.Cases {
 		for repeat := 1; repeat <= tc.Repeats; repeat++ {
+			runID := runIDFor(deck, tc, repeat)
+			if completed[runID] {
+				continue
+			}
 			record := runCase(deck, tc, repeat, config)
 			if err := encoder.Encode(record); err != nil {
 				return err
@@ -74,9 +82,30 @@ func RunDeck(config RunnerConfig) error {
 	return nil
 }
 
+// completedRunIDs returns the run IDs already recorded in an existing JSONL
+// batch file so interrupted batches can resume without duplicating work.
+func completedRunIDs(path string) (map[string]bool, error) {
+	completed := map[string]bool{}
+	records, err := LoadRunRecords(path)
+	if os.IsNotExist(err) {
+		return completed, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, record := range records {
+		completed[record.RunID] = true
+	}
+	return completed, nil
+}
+
+func runIDFor(deck TaskDeck, tc TaskCase, repeat int) string {
+	return fmt.Sprintf("%s:%s:%d", sanitizeID(deck.Name), sanitizeID(tc.ID), repeat)
+}
+
 func runCase(deck TaskDeck, tc TaskCase, repeat int, config RunnerConfig) RunRecord {
 	started := time.Now().UTC()
-	runID := fmt.Sprintf("%s:%s:%d", sanitizeID(deck.Name), sanitizeID(tc.ID), repeat)
+	runID := runIDFor(deck, tc, repeat)
 	sessionID := fmt.Sprintf("eval-%s", runID)
 	record := RunRecord{RunID: runID, DeckName: deck.Name, CaseID: tc.ID, RepeatIndex: repeat, SessionID: sessionID, StartedAt: started.Format(time.RFC3339Nano)}
 	memory := catalog.NewMemory()
