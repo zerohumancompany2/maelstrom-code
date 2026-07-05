@@ -23,6 +23,28 @@ func TestLoadTaskDeckParsesMinimalDeck(t *testing.T) {
 	}
 }
 
+func writeModelFixture(t *testing.T, path, name string) {
+	t.Helper()
+	raw := "apiVersion: maelstrom/v1\nkind: Model\nname: " + name + "\nproviders:\n  - name: fake\n    modelRef: " + name + "-ref\nlimits:\n  contextWindow: 4096\n  maxOutputTokens: 512\ndefaults:\n  temperature: 0.0\n  topP: 1.0\ncapabilities:\n  tools: true\n  reasoning: false\n  multimodal: false\n  streaming: false\n"
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatalf("write model: %v", err)
+	}
+}
+
+func writeAgentFixture(t *testing.T, path, modelName string) {
+	t.Helper()
+	raw := "apiVersion: maelstrom/v1\nkind: Agent\nname: test-agent\nmodel: " + modelName + "\ntools: []\ncontext:\n  inputBudget: 2000\n  projections:\n    - type: state_task\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      prompt: Return a summary.\n      outputs:\n        schema: cognitive_step_v1\n        requiredFields: [summary]\n  transitions: []\n"
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatalf("write agent: %v", err)
+	}
+}
+
+const smokeDeckEvalBlock = "    eval:\n      name: case-1\n      require_completed: false\n      max_invalid_outputs: 1\n      max_invalid_tool_proposals: 0\n      max_tool_execution_failures: 0\n      max_unrecovered_retries: 0\n      max_missing_required: 1\n      max_wrong_state: 0\n"
+
+func smokeProvider() *provider.FakeProvider {
+	return &provider.FakeProvider{Response: provider.Response{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"summary":"done"}`}}}}
+}
+
 // writeSmokeDeckFixture writes a minimal model/agent/deck fixture and returns
 // a RunnerConfig wired to a fake provider.
 func writeSmokeDeckFixture(t *testing.T) RunnerConfig {
@@ -32,18 +54,33 @@ func writeSmokeDeckFixture(t *testing.T) RunnerConfig {
 	modelPath := filepath.Join(tempDir, "model.yaml")
 	agentPath := filepath.Join(tempDir, "agent.yaml")
 	outputPath := filepath.Join(tempDir, "out.jsonl")
-	if err := os.WriteFile(modelPath, []byte("apiVersion: maelstrom/v1\nkind: Model\nname: test-model\nproviders:\n  - name: fake\n    modelRef: fake-model\nlimits:\n  contextWindow: 4096\n  maxOutputTokens: 512\ndefaults:\n  temperature: 0.0\n  topP: 1.0\ncapabilities:\n  tools: true\n  reasoning: false\n  multimodal: false\n  streaming: false\n"), 0o644); err != nil {
-		t.Fatalf("write model: %v", err)
-	}
-	if err := os.WriteFile(agentPath, []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: test-agent\nmodel: test-model\ntools: []\ncontext:\n  inputBudget: 2000\n  projections:\n    - type: state_task\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      prompt: Return a summary.\n      outputs:\n        schema: cognitive_step_v1\n        requiredFields: [summary]\n  transitions: []\n"), 0o644); err != nil {
-		t.Fatalf("write agent: %v", err)
-	}
-	deckRaw := "name: smoke\ncases:\n  - id: case-1\n    model: " + modelPath + "\n    agent: " + agentPath + "\n    prompt: Summarize.\n    eval:\n      name: case-1\n      require_completed: false\n      max_invalid_outputs: 1\n      max_invalid_tool_proposals: 0\n      max_tool_execution_failures: 0\n      max_unrecovered_retries: 0\n      max_missing_required: 1\n      max_wrong_state: 0\n"
+	writeModelFixture(t, modelPath, "test-model")
+	writeAgentFixture(t, agentPath, "test-model")
+	deckRaw := "name: smoke\ncases:\n  - id: case-1\n    model: " + modelPath + "\n    agent: " + agentPath + "\n    prompt: Summarize.\n" + smokeDeckEvalBlock
 	if err := os.WriteFile(deckPath, []byte(deckRaw), 0o644); err != nil {
 		t.Fatalf("write deck: %v", err)
 	}
-	fakeProvider := &provider.FakeProvider{Response: provider.Response{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"summary":"done"}`}}}}
-	return RunnerConfig{DeckPath: deckPath, OutputPath: outputPath, Provider: fakeProvider, RootDir: tempDir}
+	return RunnerConfig{DeckPath: deckPath, OutputPath: outputPath, Provider: smokeProvider(), RootDir: tempDir}
+}
+
+// writeMatrixDeckFixture writes a deck with two deck-level models and one
+// case without a case-level model override.
+func writeMatrixDeckFixture(t *testing.T) RunnerConfig {
+	t.Helper()
+	tempDir := t.TempDir()
+	deckPath := filepath.Join(tempDir, "deck.yaml")
+	modelAPath := filepath.Join(tempDir, "model-a.yaml")
+	modelBPath := filepath.Join(tempDir, "model-b.yaml")
+	agentPath := filepath.Join(tempDir, "agent.yaml")
+	outputPath := filepath.Join(tempDir, "out.jsonl")
+	writeModelFixture(t, modelAPath, "model-a")
+	writeModelFixture(t, modelBPath, "model-b")
+	writeAgentFixture(t, agentPath, "model-a")
+	deckRaw := "name: matrix\nmodels:\n  - " + modelAPath + "\n  - " + modelBPath + "\ncases:\n  - id: case-1\n    agent: " + agentPath + "\n    prompt: Summarize.\n" + smokeDeckEvalBlock
+	if err := os.WriteFile(deckPath, []byte(deckRaw), 0o644); err != nil {
+		t.Fatalf("write deck: %v", err)
+	}
+	return RunnerConfig{DeckPath: deckPath, OutputPath: outputPath, Provider: smokeProvider(), RootDir: tempDir}
 }
 
 func TestRunDeckWritesJSONLRecord(t *testing.T) {
@@ -90,5 +127,53 @@ func TestRunDeckResumeSkipsCompletedRuns(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	if len(lines) != 1 {
 		t.Fatalf("got %d lines after resume, want 1 (no duplicates)", len(lines))
+	}
+}
+
+func TestRunDeckRunsModelMatrix(t *testing.T) {
+	config := writeMatrixDeckFixture(t)
+	if err := RunDeck(config); err != nil {
+		t.Fatalf("RunDeck: %v", err)
+	}
+	raw, err := os.ReadFile(config.OutputPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2 (one per model)", len(lines))
+	}
+	seenModels := map[string]bool{}
+	seenRunIDs := map[string]bool{}
+	for _, line := range lines {
+		var record RunRecord
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("unmarshal record: %v", err)
+		}
+		if record.Error != "" {
+			t.Fatalf("record error = %q", record.Error)
+		}
+		if record.ModelID == "" || record.ModelRef == "" || record.ModelLabel == "" {
+			t.Fatalf("missing model refs in record %+v", record)
+		}
+		seenModels[record.ModelID] = true
+		seenRunIDs[record.RunID] = true
+	}
+	if !seenModels["model-a"] || !seenModels["model-b"] {
+		t.Fatalf("models seen = %v", seenModels)
+	}
+	if len(seenRunIDs) != 2 {
+		t.Fatalf("run IDs not distinct: %v", seenRunIDs)
+	}
+	// Resume should add nothing.
+	if err := RunDeck(config); err != nil {
+		t.Fatalf("resume RunDeck: %v", err)
+	}
+	raw, err = os.ReadFile(config.OutputPath)
+	if err != nil {
+		t.Fatalf("re-read output: %v", err)
+	}
+	if got := len(strings.Split(strings.TrimSpace(string(raw)), "\n")); got != 2 {
+		t.Fatalf("got %d lines after resume, want 2", got)
 	}
 }

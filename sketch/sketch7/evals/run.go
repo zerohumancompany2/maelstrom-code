@@ -25,6 +25,9 @@ type RunRecord struct {
 	CaseID      string            `json:"case_id"`
 	RepeatIndex int               `json:"repeat_index"`
 	AgentID     string            `json:"agent_id"`
+	ModelLabel  string            `json:"model_label,omitempty"`
+	ModelID     string            `json:"model_id,omitempty"`
+	ModelRef    string            `json:"model_ref,omitempty"`
 	SessionID   string            `json:"session_id"`
 	StartedAt   string            `json:"started_at"`
 	FinishedAt  string            `json:"finished_at"`
@@ -68,18 +71,50 @@ func RunDeck(config RunnerConfig) error {
 
 	encoder := json.NewEncoder(f)
 	for _, tc := range deck.Cases {
-		for repeat := 1; repeat <= tc.Repeats; repeat++ {
-			runID := runIDFor(deck, tc, repeat)
-			if completed[runID] {
-				continue
-			}
-			record := runCase(deck, tc, repeat, config)
-			if err := encoder.Encode(record); err != nil {
-				return err
+		for _, modelPath := range modelPathsFor(deck, tc, config.DefaultModelPath) {
+			for repeat := 1; repeat <= tc.Repeats; repeat++ {
+				runID := runIDFor(deck, tc, modelPath, repeat)
+				if completed[runID] {
+					continue
+				}
+				record := runCase(deck, tc, modelPath, repeat, config)
+				if err := encoder.Encode(record); err != nil {
+					return err
+				}
 			}
 		}
 	}
 	return nil
+}
+
+// modelPathsFor resolves the model matrix for a case: an explicit case model
+// wins, then the deck-level model list, then the CLI default model path.
+func modelPathsFor(deck TaskDeck, tc TaskCase, defaultModelPath string) []string {
+	if strings.TrimSpace(tc.ModelPath) != "" {
+		return []string{tc.ModelPath}
+	}
+	paths := []string{}
+	for _, path := range deck.Models {
+		if strings.TrimSpace(path) != "" {
+			paths = append(paths, path)
+		}
+	}
+	if len(paths) > 0 {
+		return paths
+	}
+	return []string{defaultModelPath}
+}
+
+// modelLabel derives a stable run ID component from a model file path. An
+// empty path (CLI default fallback) labels as "default", so resumed batches
+// assume the default model does not change between invocations.
+func modelLabel(path string) string {
+	base := strings.TrimSpace(filepath.Base(path))
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	if base == "" || base == "." {
+		return "default"
+	}
+	return sanitizeID(base)
 }
 
 // completedRunIDs returns the run IDs already recorded in an existing JSONL
@@ -99,17 +134,17 @@ func completedRunIDs(path string) (map[string]bool, error) {
 	return completed, nil
 }
 
-func runIDFor(deck TaskDeck, tc TaskCase, repeat int) string {
-	return fmt.Sprintf("%s:%s:%d", sanitizeID(deck.Name), sanitizeID(tc.ID), repeat)
+func runIDFor(deck TaskDeck, tc TaskCase, modelPath string, repeat int) string {
+	return fmt.Sprintf("%s:%s:%s:%d", sanitizeID(deck.Name), sanitizeID(tc.ID), modelLabel(modelPath), repeat)
 }
 
-func runCase(deck TaskDeck, tc TaskCase, repeat int, config RunnerConfig) RunRecord {
+func runCase(deck TaskDeck, tc TaskCase, modelPath string, repeat int, config RunnerConfig) RunRecord {
 	started := time.Now().UTC()
-	runID := runIDFor(deck, tc, repeat)
+	runID := runIDFor(deck, tc, modelPath, repeat)
 	sessionID := fmt.Sprintf("eval-%s", runID)
-	record := RunRecord{RunID: runID, DeckName: deck.Name, CaseID: tc.ID, RepeatIndex: repeat, SessionID: sessionID, StartedAt: started.Format(time.RFC3339Nano)}
+	record := RunRecord{RunID: runID, DeckName: deck.Name, CaseID: tc.ID, RepeatIndex: repeat, ModelLabel: modelLabel(modelPath), SessionID: sessionID, StartedAt: started.Format(time.RFC3339Nano)}
 	memory := catalog.NewMemory()
-	for _, path := range []string{choosePath(tc.ModelPath, config.DefaultModelPath), tc.AgentPath, tc.WorkflowPath} {
+	for _, path := range []string{modelPath, tc.AgentPath, tc.WorkflowPath} {
 		if strings.TrimSpace(path) == "" {
 			continue
 		}
@@ -130,6 +165,10 @@ func runCase(deck TaskDeck, tc TaskCase, repeat int, config RunnerConfig) RunRec
 		record.Error = "no model definition loaded"
 		record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		return record
+	}
+	record.ModelID = modelDef.Name
+	if len(modelDef.Providers) > 0 {
+		record.ModelRef = modelDef.Providers[0].ModelRef
 	}
 	agentDef, ok := firstAgent(memory)
 	if !ok {
@@ -218,13 +257,6 @@ func firstWorkflow(memory *catalog.Memory) (defs.WorkflowDefinition, bool) {
 		return def, true
 	}
 	return defs.WorkflowDefinition{}, false
-}
-
-func choosePath(primary, fallback string) string {
-	if strings.TrimSpace(primary) != "" {
-		return primary
-	}
-	return fallback
 }
 
 func sanitizeID(value string) string {

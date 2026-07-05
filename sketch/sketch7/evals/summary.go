@@ -20,6 +20,7 @@ type BatchSummary struct {
 	FailedChecks   map[string]int         `json:"failed_checks"`
 	ByCase         map[string]CaseSummary `json:"by_case"`
 	ByAgent        map[string]CaseSummary `json:"by_agent"`
+	ByModel        map[string]CaseSummary `json:"by_model"`
 }
 
 type CaseSummary struct {
@@ -74,6 +75,7 @@ func SummarizeRuns(records []RunRecord) BatchSummary {
 		FailedChecks: map[string]int{},
 		ByCase:       map[string]CaseSummary{},
 		ByAgent:      map[string]CaseSummary{},
+		ByModel:      map[string]CaseSummary{},
 	}
 	for _, record := range records {
 		summary.Total++
@@ -98,6 +100,9 @@ func SummarizeRuns(records []RunRecord) BatchSummary {
 		if strings.TrimSpace(record.AgentID) != "" {
 			summary.ByAgent[record.AgentID] = accumulateCaseSummary(summary.ByAgent[record.AgentID], record)
 		}
+		if key := modelSummaryKey(record); key != "" {
+			summary.ByModel[key] = accumulateCaseSummary(summary.ByModel[key], record)
+		}
 	}
 	summary.PassRate = passRate(summary.Passed, summary.Total)
 	for key, value := range summary.ByCase {
@@ -108,7 +113,20 @@ func SummarizeRuns(records []RunRecord) BatchSummary {
 		value.PassRate = passRate(value.Passed, value.Total)
 		summary.ByAgent[key] = value
 	}
+	for key, value := range summary.ByModel {
+		value.PassRate = passRate(value.Passed, value.Total)
+		summary.ByModel[key] = value
+	}
 	return summary
+}
+
+// modelSummaryKey prefers the model definition name and falls back to the
+// path-derived label for records that errored before loading a model.
+func modelSummaryKey(record RunRecord) string {
+	if strings.TrimSpace(record.ModelID) != "" {
+		return record.ModelID
+	}
+	return strings.TrimSpace(record.ModelLabel)
 }
 
 func SummarizeBatchFile(path string) (BatchSummary, error) {
@@ -130,6 +148,7 @@ func PrintBatchSummary(summary BatchSummary) {
 	printCountMap("failed_checks", summary.FailedChecks)
 	printCaseSummaries("by_case", summary.ByCase)
 	printCaseSummaries("by_agent", summary.ByAgent)
+	printCaseSummaries("by_model", summary.ByModel)
 }
 
 func accumulateCaseSummary(current CaseSummary, record RunRecord) CaseSummary {

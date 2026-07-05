@@ -11,6 +11,7 @@ import (
 type TaskDeck struct {
 	Name        string     `yaml:"name" json:"name"`
 	Description string     `yaml:"description" json:"description"`
+	Models      []string   `yaml:"models,omitempty" json:"models,omitempty"`
 	Cases       []TaskCase `yaml:"cases" json:"cases"`
 }
 

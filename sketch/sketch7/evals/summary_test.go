@@ -57,16 +57,16 @@ func TestLoadRunRecordsMissingFile(t *testing.T) {
 func TestSummarizeRunsAggregates(t *testing.T) {
 	records := []RunRecord{
 		{
-			RunID: "deck:case-1:1", CaseID: "case-1", AgentID: "agent-a", Passed: true,
+			RunID: "deck:case-1:1", CaseID: "case-1", AgentID: "agent-a", ModelID: "model-a", Passed: true,
 			Stats: logs.SessionStats{StopReasons: map[string]int{"tool_calls": 2, "end_turn": 1}},
 		},
 		{
-			RunID: "deck:case-1:2", CaseID: "case-1", AgentID: "agent-a", Passed: false,
+			RunID: "deck:case-1:2", CaseID: "case-1", AgentID: "agent-a", ModelID: "model-b", Passed: false,
 			Eval:  EvalResult{Checks: []EvalCheck{{Name: "max_invalid_outputs", Passed: false}}},
 			Stats: logs.SessionStats{StopReasons: map[string]int{"end_turn": 1}, Output: logs.OutputStats{Invalid: 3}},
 		},
 		{
-			RunID: "deck:case-2:1", CaseID: "case-2", AgentID: "agent-b", Passed: false, Error: "boom",
+			RunID: "deck:case-2:1", CaseID: "case-2", AgentID: "agent-b", ModelLabel: "model-b", Passed: false, Error: "boom",
 		},
 	}
 	summary := SummarizeRuns(records)
@@ -92,6 +92,15 @@ func TestSummarizeRunsAggregates(t *testing.T) {
 	agentB := summary.ByAgent["agent-b"]
 	if agentB.Total != 1 || agentB.Errored != 1 || agentB.PassRate != 0 {
 		t.Fatalf("agent-b summary = %+v", agentB)
+	}
+	modelA := summary.ByModel["model-a"]
+	if modelA.Total != 1 || modelA.Passed != 1 || modelA.PassRate != 1 {
+		t.Fatalf("model-a summary = %+v", modelA)
+	}
+	// model-b groups by ModelID when present and falls back to ModelLabel.
+	modelB := summary.ByModel["model-b"]
+	if modelB.Total != 2 || modelB.Passed != 0 || modelB.Errored != 1 {
+		t.Fatalf("model-b summary = %+v", modelB)
 	}
 }
 
