@@ -70,6 +70,11 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 			return err
 		}
 		request.ResponseFormat = responseFormatForState(view.Cognitive)
+		if finalizingCognitive && request.ResponseFormat != nil {
+			// Finalization validation requires the wrapped {"cognitive": {...}}
+			// shape, so the enforced schema must request the same shape.
+			request.ResponseFormat.WrapBucket = "cognitive"
+		}
 		startedAt := time.Now().UnixMilli()
 		sessionHistory.Append(logs.InferenceEnvelopeRecord{SessionBaseRecord: sessionHistory.NextRecord("inference_envelope"), PayloadID: inferencePayload.PayloadID, ModelRef: inferencePayload.ModelRef, ProviderRef: agent.ProviderName, StartedAtUnixMilli: startedAt, IncludedContextRecordIDs: contextRecordIDs(inferencePayload.Sections), IncludedTranscriptKinds: messageKinds(inferencePayload.Messages), IncludedToolNames: toolNamesForDefinitions(toolsForRequest)})
 		response, err := l.Provider.Send(request)

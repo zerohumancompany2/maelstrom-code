@@ -159,6 +159,15 @@ When promotion happens, the runtime should stay conceptually smaller than the CL
 
 The product should not drift into a situation where most complexity lives in glue layers that obscure the actual runtime semantics.
 
+### 10. Eval batch retry semantics
+
+Batch resume currently treats any recorded run as done, including runs that
+ended in provider errors (timeouts, transport failures). Live OpenRouter
+batches occasionally hit slow constrained-decoding backends, so a
+`--retry-failed` (or error-aware resume) mode may become worth adding once
+error rates are observed across real batteries. Until then, rerunning into a
+fresh output file is an acceptable manual workaround.
+
 ## Anti-goals
 
 These are not absolute forever bans, but they should be resisted unless there is strong evidence.

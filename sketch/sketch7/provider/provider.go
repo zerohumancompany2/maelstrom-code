@@ -39,6 +39,9 @@ type StructuredOutputFormat struct {
 	FieldTypes     map[string]string
 	FieldEnums     map[string][]string
 	Strict         bool
+	// WrapBucket nests the schema under a single required top-level key
+	// (e.g. "cognitive"), matching finalization bucket validation.
+	WrapBucket string
 }
 
 type Output interface{ output() }

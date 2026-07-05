@@ -88,7 +88,9 @@ func (p *OpenAICompatibleProvider) Send(request Request) (Response, error) {
 	}
 	client := p.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 60 * time.Second}
+		// Finalization turns with strict json_schema can exceed 60s on some
+		// backends; the eval deck watchdog still bounds total case time.
+		client = &http.Client{Timeout: 120 * time.Second}
 	}
 	httpResp, err := client.Do(httpReq)
 	if err != nil {
@@ -163,10 +165,21 @@ func toOpenAIResponseFormat(format *StructuredOutputFormat, hasTools bool) any {
 	if format == nil || strings.TrimSpace(format.Name) == "" || len(format.RequiredFields) == 0 {
 		return nil
 	}
+	// Forced JSON modes suppress tool calling on most OpenAI-compatible
+	// backends, so tool-bearing requests run unconstrained; the strict schema
+	// applies on finalization/no-tools turns where contracts matter most.
 	if hasTools {
-		return map[string]any{"type": "json_object"}
+		return nil
 	}
 	schema := structuredOutputJSONSchema(format.RequiredFields, format.OptionalFields, format.FieldTypes, format.FieldEnums, format.Strict)
+	if strings.TrimSpace(format.WrapBucket) != "" {
+		schema = map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{format.WrapBucket: schema},
+			"required":             []string{format.WrapBucket},
+			"additionalProperties": false,
+		}
+	}
 	return map[string]any{
 		"type": "json_schema",
 		"json_schema": map[string]any{

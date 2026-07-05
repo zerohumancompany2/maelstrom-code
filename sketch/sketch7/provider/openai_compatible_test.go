@@ -49,9 +49,8 @@ func TestOpenAICompatibleProviderBuildsChatCompletionsBody(t *testing.T) {
 	if !ok || len(stop) != 1 || stop[0] != "</tool_call>" {
 		t.Fatalf("stop = %#v, want [</tool_call>]", decoded["stop"])
 	}
-	responseFormat := decoded["response_format"].(map[string]any)
-	if responseFormat["type"] != "json_object" {
-		t.Fatalf("response_format = %#v, want json_object when tools are exposed", responseFormat)
+	if responseFormat, ok := decoded["response_format"]; ok {
+		t.Fatalf("response_format = %#v, want omitted when tools are exposed so tool calling is not suppressed", responseFormat)
 	}
 	toolSchema := tools[0].(map[string]any)["function"].(map[string]any)["parameters"].(map[string]any)
 	required, ok := toolSchema["required"].([]any)
@@ -108,6 +107,38 @@ func TestOpenAICompatibleProviderBuildsJSONSchemaResponseFormatWithoutTools(t *t
 	completionSignal := properties["completion_signal"].(map[string]any)
 	if completionSignal["type"] != "boolean" {
 		t.Fatalf("completion_signal schema = %#v, want boolean type", completionSignal)
+	}
+}
+
+func TestOpenAICompatibleProviderWrapsSchemaInBucket(t *testing.T) {
+	p := &OpenAICompatibleProvider{}
+	body, err := p.buildHTTPBody(Request{
+		ModelRef: "local-model",
+		Lines:    []RequestLine{{Kind: "prompt", Role: "user", Content: "Finalize."}},
+		ResponseFormat: &StructuredOutputFormat{
+			Name:           "reader-answer-v1",
+			RequiredFields: []string{"summary", "completion_signal"},
+			FieldTypes:     map[string]string{"completion_signal": "boolean"},
+			Strict:         true,
+			WrapBucket:     "cognitive",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	schema := decoded["response_format"].(map[string]any)["json_schema"].(map[string]any)["schema"].(map[string]any)
+	required, ok := schema["required"].([]any)
+	if !ok || len(required) != 1 || required[0] != "cognitive" {
+		t.Fatalf("outer required = %#v, want [cognitive]", schema["required"])
+	}
+	inner := schema["properties"].(map[string]any)["cognitive"].(map[string]any)
+	innerProps := inner["properties"].(map[string]any)
+	if _, ok := innerProps["summary"]; !ok {
+		t.Fatalf("inner schema = %#v, want flat contract nested under cognitive", inner)
 	}
 }
 
