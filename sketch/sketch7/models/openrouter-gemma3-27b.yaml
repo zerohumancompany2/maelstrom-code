@@ -1,0 +1,18 @@
+apiVersion: maelstrom/v1
+kind: Model
+name: gemma3-27b
+description: Gemma 3 27B instruct via OpenRouter; local-class stand-in for eval batteries.
+providers:
+  - name: openrouter
+    modelRef: google/gemma-3-27b-it
+limits:
+  contextWindow: 131072
+  maxOutputTokens: 8192
+defaults:
+  temperature: 0.0
+  topP: 1.0
+capabilities:
+  tools: true
+  reasoning: false
+  multimodal: false
+  streaming: false

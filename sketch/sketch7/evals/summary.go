@@ -24,10 +24,13 @@ type BatchSummary struct {
 }
 
 type CaseSummary struct {
-	Total    int     `json:"total"`
-	Passed   int     `json:"passed"`
-	Errored  int     `json:"errored"`
-	PassRate float64 `json:"pass_rate"`
+	Total                int     `json:"total"`
+	Passed               int     `json:"passed"`
+	Errored              int     `json:"errored"`
+	PassRate             float64 `json:"pass_rate"`
+	InvalidOutputs       int     `json:"invalid_outputs"`
+	UnrecoveredRetries   int     `json:"unrecovered_retries"`
+	FinalizationFailures int     `json:"finalization_failures"`
 }
 
 // LoadRunRecords reads a JSONL batch file, keeping only the latest record per
@@ -159,6 +162,9 @@ func accumulateCaseSummary(current CaseSummary, record RunRecord) CaseSummary {
 	if strings.TrimSpace(record.Error) != "" {
 		current.Errored++
 	}
+	current.InvalidOutputs += record.Stats.Output.Invalid
+	current.UnrecoveredRetries += record.Stats.Retry.Unrecovered
+	current.FinalizationFailures += record.Stats.StopReasons["finalization_validation_failed"]
 	return current
 }
 
@@ -193,7 +199,8 @@ func printCaseSummaries(label string, values map[string]CaseSummary) {
 	sort.Strings(keys)
 	for _, key := range keys {
 		value := values[key]
-		fmt.Printf("  %s: total=%d passed=%d errored=%d pass_rate=%.2f\n", key, value.Total, value.Passed, value.Errored, value.PassRate)
+		fmt.Printf("  %s: total=%d passed=%d errored=%d pass_rate=%.2f invalid=%d unrecovered_retries=%d finalization_failures=%d\n",
+			key, value.Total, value.Passed, value.Errored, value.PassRate, value.InvalidOutputs, value.UnrecoveredRetries, value.FinalizationFailures)
 	}
 }
 

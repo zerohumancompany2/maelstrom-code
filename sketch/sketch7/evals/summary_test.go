@@ -102,6 +102,26 @@ func TestSummarizeRunsAggregates(t *testing.T) {
 	if modelB.Total != 2 || modelB.Passed != 0 || modelB.Errored != 1 {
 		t.Fatalf("model-b summary = %+v", modelB)
 	}
+	if modelB.InvalidOutputs != 3 {
+		t.Fatalf("model-b invalid outputs = %d, want 3", modelB.InvalidOutputs)
+	}
+}
+
+func TestCaseSummaryTracksRetryAndFinalizationDiagnostics(t *testing.T) {
+	records := []RunRecord{
+		{
+			RunID: "d:c:1", CaseID: "c", ModelID: "m", Passed: false,
+			Stats: logs.SessionStats{
+				Retry:       logs.RetryStats{Unrecovered: 2},
+				StopReasons: map[string]int{"finalization_validation_failed": 1},
+			},
+		},
+	}
+	summary := SummarizeRuns(records)
+	model := summary.ByModel["m"]
+	if model.UnrecoveredRetries != 2 || model.FinalizationFailures != 1 {
+		t.Fatalf("model diagnostics = %+v", model)
+	}
 }
 
 func TestSummarizeBatchFileRoundTrip(t *testing.T) {

@@ -1,0 +1,18 @@
+apiVersion: maelstrom/v1
+kind: Model
+name: nemotron-nano-30b
+description: Nemotron 3 Nano 30B A3B via OpenRouter; local-class stand-in for eval batteries.
+providers:
+  - name: openrouter
+    modelRef: nvidia/nemotron-3-nano-30b-a3b
+limits:
+  contextWindow: 262144
+  maxOutputTokens: 8192
+defaults:
+  temperature: 0.0
+  topP: 1.0
+capabilities:
+  tools: true
+  reasoning: false
+  multimodal: false
+  streaming: false
