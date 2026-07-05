@@ -206,3 +206,56 @@ func TestRunDeckRunsModelMatrix(t *testing.T) {
 		t.Fatalf("got %d lines after resume, want 2", got)
 	}
 }
+
+func TestLoadTaskDeckUnmarshalsEvalFields(t *testing.T) {
+	config := writeSmokeDeckFixture(t)
+	deck, err := LoadTaskDeck(config.DeckPath)
+	if err != nil {
+		t.Fatalf("LoadTaskDeck: %v", err)
+	}
+	// Regression: SessionEvalCase previously lacked yaml tags, so eval
+	// thresholds in deck files were silently ignored.
+	if deck.Cases[0].Eval.MaxInvalidOutputs != 1 || deck.Cases[0].Eval.MaxMissingRequired != 1 {
+		t.Fatalf("eval thresholds not unmarshaled: %+v", deck.Cases[0].Eval)
+	}
+	if deck.Cases[0].Eval.Name != "case-1" {
+		t.Fatalf("eval name = %q", deck.Cases[0].Eval.Name)
+	}
+}
+
+func TestLoadAutoresearchDeck(t *testing.T) {
+	deck, err := LoadTaskDeck(filepath.Join("decks", "autoresearch-repo-inspection.yaml"))
+	if err != nil {
+		t.Fatalf("LoadTaskDeck: %v", err)
+	}
+	if len(deck.Cases) != 12 {
+		t.Fatalf("got %d cases, want 12", len(deck.Cases))
+	}
+	byID := map[string]TaskCase{}
+	for _, tc := range deck.Cases {
+		byID[tc.ID] = tc
+		if tc.TimeoutSeconds != 240 {
+			t.Fatalf("case %q timeout = %d, want inherited 240", tc.ID, tc.TimeoutSeconds)
+		}
+		if _, err := os.Stat(filepath.Join("..", "..", "..", tc.AgentPath)); err != nil {
+			t.Fatalf("case %q agent path: %v", tc.ID, err)
+		}
+		for _, required := range tc.Eval.RequiredFilesRead {
+			if _, err := os.Stat(filepath.Join("..", "..", "..", required)); err != nil {
+				t.Fatalf("case %q required file: %v", tc.ID, err)
+			}
+		}
+	}
+	discovery := byID["discovery-required-files"]
+	if len(discovery.Eval.RequiredFilesRead) != 3 {
+		t.Fatalf("discovery required files = %+v", discovery.Eval.RequiredFilesRead)
+	}
+	synthesis := byID["synthesis-mechanism-summary"]
+	if len(synthesis.Eval.FinalOutputContains) != 3 {
+		t.Fatalf("synthesis terms = %+v", synthesis.Eval.FinalOutputContains)
+	}
+	focus := byID["workflow-task-focus"]
+	if focus.Eval.MaxFilesRead != 6 {
+		t.Fatalf("task focus budget = %d, want 6", focus.Eval.MaxFilesRead)
+	}
+}

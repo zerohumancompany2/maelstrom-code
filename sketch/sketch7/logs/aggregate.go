@@ -98,6 +98,8 @@ func combineSessionStats(a, b SessionStats) SessionStats {
 		RetryByReason:    combineCountMaps(a.RetryByReason, b.RetryByReason),
 		OutputStatuses:   combineCountMaps(a.OutputStatuses, b.OutputStatuses),
 		ParseStatuses:    combineCountMaps(a.ParseStatuses, b.ParseStatuses),
+		FilesRead:        combineCountMaps(a.FilesRead, b.FilesRead),
+		FinalAssistant:   firstNonEmpty(b.FinalAssistant, a.FinalAssistant),
 	}
 	if combined.SessionID == "" {
 		combined.SessionID = b.SessionID

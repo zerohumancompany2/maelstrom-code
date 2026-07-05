@@ -2,21 +2,26 @@ package evals
 
 import (
 	"fmt"
+	"path"
 	"strconv"
+	"strings"
 
 	"github.com/comalice/inference_sketch/sketch/sketch7/logs"
 )
 
 type SessionEvalCase struct {
-	Name                     string  `json:"name"`
-	RequireCompleted         bool    `json:"require_completed"`
-	MaxInvalidOutputs        int     `json:"max_invalid_outputs"`
-	MaxInvalidToolProposals  int     `json:"max_invalid_tool_proposals"`
-	MaxToolExecutionFailures int     `json:"max_tool_execution_failures"`
-	MaxUnrecoveredRetries    int     `json:"max_unrecovered_retries"`
-	MaxMissingRequired       int     `json:"max_missing_required"`
-	MaxWrongState            int     `json:"max_wrong_state"`
-	MaxCompletionFailureRate float64 `json:"max_completion_failure_rate"`
+	Name                     string   `yaml:"name" json:"name"`
+	RequireCompleted         bool     `yaml:"require_completed" json:"require_completed"`
+	MaxInvalidOutputs        int      `yaml:"max_invalid_outputs" json:"max_invalid_outputs"`
+	MaxInvalidToolProposals  int      `yaml:"max_invalid_tool_proposals" json:"max_invalid_tool_proposals"`
+	MaxToolExecutionFailures int      `yaml:"max_tool_execution_failures" json:"max_tool_execution_failures"`
+	MaxUnrecoveredRetries    int      `yaml:"max_unrecovered_retries" json:"max_unrecovered_retries"`
+	MaxMissingRequired       int      `yaml:"max_missing_required" json:"max_missing_required"`
+	MaxWrongState            int      `yaml:"max_wrong_state" json:"max_wrong_state"`
+	MaxCompletionFailureRate float64  `yaml:"max_completion_failure_rate" json:"max_completion_failure_rate"`
+	RequiredFilesRead        []string `yaml:"required_files_read" json:"required_files_read,omitempty"`
+	MaxFilesRead             int      `yaml:"max_files_read" json:"max_files_read,omitempty"`
+	FinalOutputContains      []string `yaml:"final_output_contains" json:"final_output_contains,omitempty"`
 }
 
 type AggregateEvalCase struct {
@@ -65,7 +70,56 @@ func EvaluateSessionStats(stats logs.SessionStats, eval SessionEvalCase) EvalRes
 		failureRate := ratio(stats.Completion.Incomplete, stats.Completion.Total)
 		result.addCheck("completion_failure_rate", failureRate <= eval.MaxCompletionFailureRate, lessOrEqualFloat(eval.MaxCompletionFailureRate), floatString(failureRate))
 	}
+	if len(eval.RequiredFilesRead) > 0 {
+		missing := missingFiles(stats.FilesRead, eval.RequiredFilesRead)
+		total := len(eval.RequiredFilesRead)
+		actual := fmt.Sprintf("%d/%d read", total-len(missing), total)
+		if len(missing) > 0 {
+			actual += " (missing: " + strings.Join(missing, ", ") + ")"
+		}
+		result.addCheck("required_files_read", len(missing) == 0, fmt.Sprintf("%d/%d read", total, total), actual)
+	}
+	if eval.MaxFilesRead > 0 {
+		result.addCheck("files_read_budget", len(stats.FilesRead) <= eval.MaxFilesRead, lessOrEqual(eval.MaxFilesRead), intString(len(stats.FilesRead)))
+	}
+	if len(eval.FinalOutputContains) > 0 {
+		missing := missingTerms(stats.FinalAssistant, eval.FinalOutputContains)
+		total := len(eval.FinalOutputContains)
+		actual := fmt.Sprintf("%d/%d terms", total-len(missing), total)
+		if len(missing) > 0 {
+			actual += " (missing: " + strings.Join(missing, ", ") + ")"
+		}
+		result.addCheck("final_output_contains", len(missing) == 0, fmt.Sprintf("%d/%d terms", total, total), actual)
+	}
 	return result
+}
+
+// missingFiles returns the required paths not present in the files-read map.
+// Paths are cleaned on both sides so "./a/b.go" matches "a/b.go".
+func missingFiles(filesRead map[string]int, required []string) []string {
+	normalized := map[string]bool{}
+	for filePath := range filesRead {
+		normalized[path.Clean(filePath)] = true
+	}
+	missing := []string{}
+	for _, filePath := range required {
+		if !normalized[path.Clean(strings.TrimSpace(filePath))] {
+			missing = append(missing, filePath)
+		}
+	}
+	return missing
+}
+
+// missingTerms returns the terms not found (case-insensitive) in content.
+func missingTerms(content string, terms []string) []string {
+	lowered := strings.ToLower(content)
+	missing := []string{}
+	for _, term := range terms {
+		if !strings.Contains(lowered, strings.ToLower(strings.TrimSpace(term))) {
+			missing = append(missing, term)
+		}
+	}
+	return missing
 }
 
 func EvaluateAgentAggregate(aggregate logs.AgentAggregate, eval AggregateEvalCase) EvalResult {

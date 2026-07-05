@@ -53,6 +53,35 @@ func TestReduceSessionStatsAggregatesRecords(t *testing.T) {
 	}
 }
 
+func TestReduceSessionStatsTracksFilesReadAndFinalAssistant(t *testing.T) {
+	history := NewSessionHistory("session-files")
+	history.Append(UserMessageRecord{SessionBaseRecord: history.NextRecord("user"), Content: "inspect"})
+	history.Append(ToolCallRequestRecord{SessionBaseRecord: history.NextRecord("tool_call_request"), CallID: "c1", ToolName: "read_file", Arguments: `{"path":"./pkg/a.go"}`})
+	history.Append(ToolCallResultRecord{SessionBaseRecord: history.NextRecord("tool_call_result"), CallID: "c1", ToolName: "read_file", Content: "ok", IsError: false})
+	history.Append(ToolCallRequestRecord{SessionBaseRecord: history.NextRecord("tool_call_request"), CallID: "c2", ToolName: "read_file", Arguments: `{"path":"pkg/missing.go"}`})
+	history.Append(ToolCallResultRecord{SessionBaseRecord: history.NextRecord("tool_call_result"), CallID: "c2", ToolName: "read_file", Content: "no such file", IsError: true})
+	history.Append(ToolCallRequestRecord{SessionBaseRecord: history.NextRecord("tool_call_request"), CallID: "c3", ToolName: "read_symbol", Arguments: `{"path":"pkg/a.go","symbol":"Foo"}`})
+	history.Append(ToolCallResultRecord{SessionBaseRecord: history.NextRecord("tool_call_result"), CallID: "c3", ToolName: "read_symbol", Content: "func Foo()", IsError: false})
+	history.Append(ToolCallRequestRecord{SessionBaseRecord: history.NextRecord("tool_call_request"), CallID: "c4", ToolName: "list_files", Arguments: `{"path":"pkg"}`})
+	history.Append(ToolCallResultRecord{SessionBaseRecord: history.NextRecord("tool_call_result"), CallID: "c4", ToolName: "list_files", Content: "a.go", IsError: false})
+	history.Append(AssistantMessageRecord{SessionBaseRecord: history.NextRecord("assistant"), Content: "first draft"})
+	history.Append(AssistantMessageRecord{SessionBaseRecord: history.NextRecord("assistant"), Content: "final answer about Foo"})
+
+	stats := ReduceSessionStats(history)
+	if stats.FilesRead["pkg/a.go"] != 2 {
+		t.Fatalf("files read = %+v, want pkg/a.go counted twice", stats.FilesRead)
+	}
+	if _, ok := stats.FilesRead["pkg/missing.go"]; ok {
+		t.Fatalf("errored read should not count, got %+v", stats.FilesRead)
+	}
+	if len(stats.FilesRead) != 1 {
+		t.Fatalf("files read = %+v, want only pkg/a.go", stats.FilesRead)
+	}
+	if stats.FinalAssistant != "final answer about Foo" {
+		t.Fatalf("final assistant = %q", stats.FinalAssistant)
+	}
+}
+
 func TestReduceSessionStatsCountsFailures(t *testing.T) {
 	history := NewSessionHistory("session-101")
 	history.Append(StateExitRecord{SessionBaseRecord: history.NextRecord("state_exit"), Chart: "cognitive", StateName: "observe", Reason: "max_tool_calls"})

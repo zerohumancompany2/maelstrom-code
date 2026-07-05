@@ -1,6 +1,7 @@
 package evals
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/comalice/inference_sketch/sketch/sketch7/logs"
@@ -107,4 +108,54 @@ func failedChecks(result EvalResult) map[string]bool {
 		}
 	}
 	return failed
+}
+
+func TestEvaluateSessionStatsChecksRequiredFilesRead(t *testing.T) {
+	stats := logs.SessionStats{FilesRead: map[string]int{"./pkg/a.go": 1, "pkg/b.go": 2}}
+	eval := SessionEvalCase{Name: "files", RequiredFilesRead: []string{"pkg/a.go", "pkg/b.go"}}
+	result := EvaluateSessionStats(stats, eval)
+	if !result.Passed {
+		t.Fatalf("expected pass with cleaned path matching: %+v", result)
+	}
+
+	eval.RequiredFilesRead = append(eval.RequiredFilesRead, "pkg/c.go")
+	result = EvaluateSessionStats(stats, eval)
+	if result.Passed {
+		t.Fatalf("expected fail on missing file: %+v", result)
+	}
+	found := false
+	for _, check := range result.Checks {
+		if check.Name == "required_files_read" && !check.Passed {
+			found = true
+			if !strings.Contains(check.Actual, "pkg/c.go") {
+				t.Fatalf("actual should name missing file: %q", check.Actual)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("missing required_files_read check: %+v", result.Checks)
+	}
+}
+
+func TestEvaluateSessionStatsChecksFilesReadBudget(t *testing.T) {
+	stats := logs.SessionStats{FilesRead: map[string]int{"a.go": 1, "b.go": 1, "c.go": 1}}
+	if result := EvaluateSessionStats(stats, SessionEvalCase{MaxFilesRead: 3}); !result.Passed {
+		t.Fatalf("expected pass at budget: %+v", result)
+	}
+	if result := EvaluateSessionStats(stats, SessionEvalCase{MaxFilesRead: 2}); result.Passed {
+		t.Fatalf("expected fail over budget: %+v", result)
+	}
+}
+
+func TestEvaluateSessionStatsChecksFinalOutputContains(t *testing.T) {
+	stats := logs.SessionStats{FinalAssistant: "The Payload is assembled from Sections."}
+	eval := SessionEvalCase{FinalOutputContains: []string{"payload", "sections"}}
+	if result := EvaluateSessionStats(stats, eval); !result.Passed {
+		t.Fatalf("expected case-insensitive pass: %+v", result)
+	}
+	eval.FinalOutputContains = []string{"payload", "transcript"}
+	result := EvaluateSessionStats(stats, eval)
+	if result.Passed {
+		t.Fatalf("expected fail on missing term: %+v", result)
+	}
 }

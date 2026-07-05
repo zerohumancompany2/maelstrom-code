@@ -1,6 +1,11 @@
 package logs
 
-import "sort"
+import (
+	"encoding/json"
+	"path"
+	"sort"
+	"strings"
+)
 
 type SessionStats struct {
 	SessionID        string                   `json:"session_id"`
@@ -19,6 +24,20 @@ type SessionStats struct {
 	RetryByReason    map[string]int           `json:"retry_by_reason"`
 	OutputStatuses   map[string]int           `json:"output_statuses"`
 	ParseStatuses    map[string]int           `json:"parse_statuses"`
+	FilesRead        map[string]int           `json:"files_read"`
+	FinalAssistant   string                   `json:"final_assistant,omitempty"`
+}
+
+// finalAssistantLimit caps the retained final assistant content so session
+// stats stay small while remaining useful for content checks.
+const finalAssistantLimit = 4000
+
+// fileReadToolNames are tools whose successful execution counts as reading a
+// file for discovery-style evaluations.
+var fileReadToolNames = map[string]bool{
+	"read_file":         true,
+	"get_file_skeleton": true,
+	"read_symbol":       true,
 }
 
 type RecordCounts struct {
@@ -123,6 +142,7 @@ func ReduceSessionStats(history *SessionHistory) SessionStats {
 		RetryByReason:    map[string]int{},
 		OutputStatuses:   map[string]int{},
 		ParseStatuses:    map[string]int{},
+		FilesRead:        map[string]int{},
 		Output: OutputStats{
 			ByValidationStatus: map[string]int{},
 			ByParseStatus:      map[string]int{},
@@ -142,6 +162,8 @@ func ReduceSessionStats(history *SessionHistory) SessionStats {
 	index := buildRecordIndex(history)
 	latestCognitiveState := ""
 	latestWorkflowState := ""
+	finalAssistant := ""
+	pendingReads := map[string]string{}
 	for _, record := range history.Records {
 		stats.RecordCounts.Total++
 		switch v := record.(type) {
@@ -151,18 +173,24 @@ func ReduceSessionStats(history *SessionHistory) SessionStats {
 			stats.RecordCounts.Users++
 		case AssistantMessageRecord:
 			stats.RecordCounts.Assistants++
+			finalAssistant = v.Content
 		case *AssistantMessageRecord:
 			stats.RecordCounts.Assistants++
+			finalAssistant = v.Content
 		case ToolCallRequestRecord:
 			stats.RecordCounts.ToolRequests++
+			trackFileReadRequest(pendingReads, v)
 		case *ToolCallRequestRecord:
 			stats.RecordCounts.ToolRequests++
+			trackFileReadRequest(pendingReads, *v)
 		case ToolCallResultRecord:
 			stats.RecordCounts.ToolResults++
 			stats = reduceToolResult(stats, v.ToolName, v.IsError)
+			resolveFileRead(stats.FilesRead, pendingReads, v.CallID, v.IsError)
 		case *ToolCallResultRecord:
 			stats.RecordCounts.ToolResults++
 			stats = reduceToolResult(stats, v.ToolName, v.IsError)
+			resolveFileRead(stats.FilesRead, pendingReads, v.CallID, v.IsError)
 		case OutputContractEvaluationRecord:
 			stats.RecordCounts.OutputEvaluations++
 			stats = reduceOutput(stats, v)
@@ -207,6 +235,10 @@ func ReduceSessionStats(history *SessionHistory) SessionStats {
 			incrementIfPresent(stats.ProviderRefs, v.ProviderRef)
 		}
 	}
+	if len(finalAssistant) > finalAssistantLimit {
+		finalAssistant = finalAssistant[:finalAssistantLimit]
+	}
+	stats.FinalAssistant = finalAssistant
 	return stats
 }
 
@@ -503,6 +535,38 @@ func ensurePerStateMaps(stats *PerStateStats) {
 	if stats.MissingFieldCounts == nil {
 		stats.MissingFieldCounts = map[string]int{}
 	}
+}
+
+// trackFileReadRequest remembers the target path of a file-reading tool call
+// so a later successful result can be attributed to that file.
+func trackFileReadRequest(pending map[string]string, record ToolCallRequestRecord) {
+	if !fileReadToolNames[record.ToolName] || record.CallID == "" {
+		return
+	}
+	var args struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(record.Arguments), &args); err != nil {
+		return
+	}
+	cleaned := path.Clean(strings.TrimSpace(args.Path))
+	if cleaned == "" || cleaned == "." {
+		return
+	}
+	pending[record.CallID] = cleaned
+}
+
+// resolveFileRead counts a file as read when its tool call succeeded.
+func resolveFileRead(filesRead map[string]int, pending map[string]string, callID string, isError bool) {
+	filePath, ok := pending[callID]
+	if !ok {
+		return
+	}
+	delete(pending, callID)
+	if isError {
+		return
+	}
+	filesRead[filePath]++
 }
 
 func incrementIfPresent(items map[string]int, key string) {
