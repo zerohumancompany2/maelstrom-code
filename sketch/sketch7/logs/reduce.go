@@ -400,6 +400,38 @@ func CountFinalizationRetriesSinceStateEnter(history *SessionHistory, chart stri
 	return count
 }
 
+func CountToolCallsSinceStateEnter(history *SessionHistory, chart string) int {
+	if history == nil {
+		return 0
+	}
+	enterIndex := -1
+	for i := len(history.Records) - 1; i >= 0; i-- {
+		enter, ok := history.Records[i].(StateEnterRecord)
+		if ok && enter.Chart == chart {
+			enterIndex = i
+			break
+		}
+		enterPtr, ok := history.Records[i].(*StateEnterRecord)
+		if ok && enterPtr.Chart == chart {
+			enterIndex = i
+			break
+		}
+	}
+	if enterIndex == -1 {
+		return 0
+	}
+	count := 0
+	for i := enterIndex + 1; i < len(history.Records); i++ {
+		switch history.Records[i].(type) {
+		case ToolCallRequestRecord:
+			count++
+		case *ToolCallRequestRecord:
+			count++
+		}
+	}
+	return count
+}
+
 func buildRecordIndex(history *SessionHistory) map[string]SessionRecord {
 	index := map[string]SessionRecord{}
 	if history == nil {

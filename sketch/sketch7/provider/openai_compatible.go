@@ -21,10 +21,13 @@ type OpenAICompatibleProvider struct {
 }
 
 type openAIChatRequest struct {
-	Model       string          `json:"model"`
-	Messages    []openAIMessage `json:"messages"`
-	Tools       []openAITool    `json:"tools,omitempty"`
-	Temperature float64         `json:"temperature,omitempty"`
+	Model              string          `json:"model"`
+	Messages           []openAIMessage `json:"messages"`
+	Tools              []openAITool    `json:"tools,omitempty"`
+	Temperature        float64         `json:"temperature,omitempty"`
+	Stop               []string        `json:"stop,omitempty"`
+	ResponseFormat     any             `json:"response_format,omitempty"`
+	ChatTemplateKwargs map[string]any  `json:"chat_template_kwargs,omitempty"`
 }
 
 type openAIMessage struct {
@@ -128,6 +131,9 @@ func (p *OpenAICompatibleProvider) buildHTTPBody(request Request) ([]byte, error
 			messages = append(messages, openAIMessage{Role: line.Role, Content: line.Content})
 		}
 	}
+	if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
+		messages = append(messages, openAIMessage{Role: "user", Content: "Continue with the current task frame. Return the required JSON for the current state."})
+	}
 	tools := make([]openAITool, 0, len(request.Tools))
 	for _, tool := range request.Tools {
 		tools = append(tools, openAITool{
@@ -140,11 +146,80 @@ func (p *OpenAICompatibleProvider) buildHTTPBody(request Request) ([]byte, error
 		})
 	}
 	chatReq := openAIChatRequest{
-		Model:    request.ModelRef,
-		Messages: messages,
-		Tools:    tools,
+		Model:              request.ModelRef,
+		Messages:           messages,
+		Tools:              tools,
+		Stop:               []string{"</tool_call>"},
+		ResponseFormat:     toOpenAIResponseFormat(request.ResponseFormat, len(tools) > 0),
+		ChatTemplateKwargs: map[string]any{"enable_thinking": false},
+	}
+	if len(tools) == 0 {
+		chatReq.Stop = nil
 	}
 	return json.Marshal(chatReq)
+}
+
+func toOpenAIResponseFormat(format *StructuredOutputFormat, hasTools bool) any {
+	if format == nil || strings.TrimSpace(format.Name) == "" || len(format.RequiredFields) == 0 {
+		return nil
+	}
+	if hasTools {
+		return map[string]any{"type": "json_object"}
+	}
+	schema := structuredOutputJSONSchema(format.RequiredFields, format.FieldEnums, format.Strict)
+	return map[string]any{
+		"type": "json_schema",
+		"json_schema": map[string]any{
+			"name":   sanitizeSchemaName(format.Name),
+			"strict": format.Strict,
+			"schema": schema,
+		},
+	}
+}
+
+func structuredOutputJSONSchema(required []string, enums map[string][]string, strict bool) map[string]any {
+	properties := map[string]any{}
+	for _, field := range required {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		properties[field] = outputFieldSchema(field, enums[field])
+	}
+	schema := map[string]any{
+		"type":       "object",
+		"properties": properties,
+		"required":   append([]string(nil), required...),
+	}
+	if strict {
+		schema["additionalProperties"] = false
+	}
+	return schema
+}
+
+func outputFieldSchema(_ string, enumValues []string) map[string]any {
+	schema := map[string]any{"type": "string"}
+	if len(enumValues) > 0 {
+		values := make([]any, 0, len(enumValues))
+		for _, value := range enumValues {
+			if strings.TrimSpace(value) != "" {
+				values = append(values, strings.TrimSpace(value))
+			}
+		}
+		if len(values) > 0 {
+			schema["enum"] = values
+		}
+	}
+	return schema
+}
+
+func sanitizeSchemaName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "state_output"
+	}
+	replacer := strings.NewReplacer("-", "_", " ", "_", ".", "_", "/", "_")
+	return replacer.Replace(name)
 }
 
 func parseOpenAIResponse(resp openAIChatResponse) (Response, error) {
@@ -153,27 +228,34 @@ func parseOpenAIResponse(resp openAIChatResponse) (Response, error) {
 	}
 	msg := resp.Choices[0].Message
 	outputs := []Output{}
+	for _, toolCall := range msg.ToolCalls {
+		outputs = append(outputs, toolRequestOutputFromOpenAIToolCall(toolCall))
+	}
+	if len(outputs) > 0 {
+		return Response{Outputs: outputs}, nil
+	}
 	if strings.TrimSpace(msg.Content) != "" {
 		outputs = append(outputs, AssistantOutput{Content: msg.Content})
 	}
-	for _, toolCall := range msg.ToolCalls {
-		arguments := map[string]string{}
-		if strings.TrimSpace(toolCall.Function.Arguments) != "" {
-			var decoded map[string]any
-			if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &decoded); err == nil {
-				for k, v := range decoded {
-					arguments[k] = fmt.Sprintf("%v", v)
-				}
+	return Response{Outputs: outputs}, nil
+}
+
+func toolRequestOutputFromOpenAIToolCall(toolCall openAIToolCall) ToolRequestOutput {
+	arguments := map[string]string{}
+	if strings.TrimSpace(toolCall.Function.Arguments) != "" {
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &decoded); err == nil {
+			for k, v := range decoded {
+				arguments[k] = fmt.Sprintf("%v", v)
 			}
 		}
-		outputs = append(outputs, ToolRequestOutput{Call: ToolCall{
-			CallID:    toolCall.ID,
-			ToolName:  toolCall.Function.Name,
-			Arguments: arguments,
-			RawArgs:   json.RawMessage(toolCall.Function.Arguments),
-		}})
 	}
-	return Response{Outputs: outputs}, nil
+	return ToolRequestOutput{Call: ToolCall{
+		CallID:    toolCall.ID,
+		ToolName:  toolCall.Function.Name,
+		Arguments: arguments,
+		RawArgs:   json.RawMessage(toolCall.Function.Arguments),
+	}}
 }
 
 func toJSONSchema(parameters map[string]string, required []string) map[string]any {

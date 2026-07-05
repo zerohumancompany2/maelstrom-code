@@ -24,14 +24,15 @@ type InferenceSettings struct {
 }
 
 type CognitiveView struct {
-	CurrentState string
-	VisibleTools []string
-	EnabledTools []string
-	Prompt       string
-	Inputs       defs.StateInputContract
-	Outputs      defs.StateOutputContract
-	Completion   defs.StateCompletionContract
-	Bounds       defs.StateBoundsContract
+	CurrentState    string
+	VisibleTools    []string
+	EnabledTools    []string
+	AllowedTriggers []string
+	Prompt          string
+	Inputs          defs.StateInputContract
+	Outputs         defs.StateOutputContract
+	Completion      defs.StateCompletionContract
+	Bounds          defs.StateBoundsContract
 }
 
 type WorkflowView struct {
@@ -73,4 +74,9 @@ type SessionView struct {
 	Binding     BindingView
 	Workflow    *WorkflowView
 	Interaction InteractionView
+}
+
+type EffectiveToolPolicy struct {
+	Applied bool
+	Tools   []string
 }

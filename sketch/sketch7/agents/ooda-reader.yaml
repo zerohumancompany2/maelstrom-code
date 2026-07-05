@@ -1,0 +1,206 @@
+apiVersion: maelstrom/v1
+kind: Agent
+name: ooda-reader
+description: Read-only OODA cognitive-state agent for sketch7 stress-test experiments.
+model: zh-qwen36-27b-thinking
+tools:
+  - list_files
+  - search_files
+  - get_file_skeleton
+  - read_symbol
+  - find_references
+  - read_file
+context:
+  inputBudget: 24000
+  projections:
+    - type: system
+      name: system
+      prompt: >-
+        You are ooda-reader, a read-only repository agent using bounded cognitive modes. The task
+        frame tells you the current thought mode, tool budget, and output contract. Stay in the
+        current mode and emit state-local JSON. The runtime, not you, owns state transitions.
+    - type: repo_context
+      retentionMode: latest_effective
+    - type: state_task
+    - type: messages
+      retentionMode: coherent_tail
+cognitive:
+  initialState: observe
+  states:
+    - name: observe
+      description: Formalize the request, inspect visible evidence, and identify missing facts.
+      visibleTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      enabledTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      allowedTriggers:
+        - observed
+      prompt: >-
+        Observe the situation. Formalize the user request, separate knowns from unknowns, and
+        gather only the evidence needed to understand the repo surface before committing to a plan.
+        When the request is formalized and evidence is sufficient, include "transition":"observed"
+        in your JSON output.
+      inputs:
+        required:
+          - user_request
+        optional:
+          - repo_context
+          - prior_messages
+      outputs:
+        schema: cognitive_step_v1
+        requiredFields:
+          - summary
+          - evidence
+          - transition
+        strict: false
+      completion:
+        successWhen:
+          - request is formalized
+          - enough evidence exists to interpret constraints
+      bounds:
+        maxInferenceTurns: 2
+        maxToolCalls: 4
+        maxFinalizationRetries: 1
+    - name: orient
+      description: Interpret observations against constraints, tools, risk, and conventions.
+      visibleTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      enabledTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      allowedTriggers:
+        - oriented
+      prompt: >-
+        Orient to the task. Interpret the observed facts against repo conventions, available tools,
+        risk, uncertainty, and any missing information that still matters. When constraints and
+        risks are clear enough to choose a next move, include "transition":"oriented" in your JSON
+        output.
+      inputs:
+        required:
+          - user_request
+          - observed_evidence
+        optional:
+          - repo_context
+      outputs:
+        schema: cognitive_step_v1
+        requiredFields:
+          - summary
+          - risks
+          - transition
+        strict: false
+      completion:
+        successWhen:
+          - constraints are identified
+          - uncertainty is reduced enough to choose a next move
+      bounds:
+        maxInferenceTurns: 2
+        maxToolCalls: 3
+        maxFinalizationRetries: 1
+    - name: decide
+      description: Choose the smallest sufficient next move and stop condition.
+      visibleTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      enabledTools: []
+      allowedTriggers:
+        - decided
+      prompt: >-
+        Decide the next commitment. Choose the smallest sufficient plan or final-answer strategy,
+        name the stop condition, and avoid reopening broad exploration. When the next move is
+        concrete, include "transition":"decided" in your JSON output.
+      inputs:
+        required:
+          - observed_evidence
+          - oriented_constraints
+        optional:
+          - risks
+      outputs:
+        schema: cognitive_step_v1
+        requiredFields:
+          - decision
+          - summary
+          - transition
+        strict: false
+      completion:
+        successWhen:
+          - next move is concrete
+          - stop condition is explicit
+      bounds:
+        maxInferenceTurns: 1
+        maxToolCalls: 1
+        maxFinalizationRetries: 1
+    - name: act
+      description: Execute the selected move or produce the bounded final answer.
+      visibleTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      enabledTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      prompt: >-
+        Act on the chosen plan. Execute only the selected minimal move, then produce a compact,
+        evidence-grounded answer. Do not reopen broad deliberation. When the answer is complete,
+        include "completion_signal":true in your JSON output.
+      inputs:
+        required:
+          - decision
+        optional:
+          - observed_evidence
+          - risks
+      outputs:
+        schema: cognitive_step_v1
+        requiredFields:
+          - summary
+          - evidence
+          - decision
+          - completion_signal
+        strict: false
+      completion:
+        successWhen:
+          - answer or action follows the decision
+          - evidence is compact and traceable
+      bounds:
+        maxInferenceTurns: 2
+        maxToolCalls: 4
+        maxFinalizationRetries: 1
+  transitions:
+    - trigger: observed
+      from: observe
+      to: orient
+    - trigger: oriented
+      from: orient
+      to: decide
+    - trigger: decided
+      from: decide
+      to: act

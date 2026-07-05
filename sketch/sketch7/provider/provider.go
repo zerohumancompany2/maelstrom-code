@@ -24,11 +24,19 @@ type ToolDefinition struct {
 }
 
 type Request struct {
-	PayloadID string
-	Provider  string
-	ModelRef  string
-	Lines     []RequestLine
-	Tools     []ToolDefinition
+	PayloadID      string
+	Provider       string
+	ModelRef       string
+	Lines          []RequestLine
+	Tools          []ToolDefinition
+	ResponseFormat *StructuredOutputFormat
+}
+
+type StructuredOutputFormat struct {
+	Name           string
+	RequiredFields []string
+	FieldEnums     map[string][]string
+	Strict         bool
 }
 
 type Output interface{ output() }

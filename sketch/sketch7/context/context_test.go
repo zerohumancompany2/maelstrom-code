@@ -1,6 +1,11 @@
 package context
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/comalice/inference_sketch/sketch/sketch7/logs"
+)
 
 func TestTrimMessagesKeepsLatestUserAnchor(t *testing.T) {
 	messages := []Message{
@@ -37,5 +42,24 @@ func TestTrimMessagesPrefersLatestCoherentTail(t *testing.T) {
 	}
 	if trimmed[0].Content != "find replace_text" || trimmed[1].Content != "Here is the answer." {
 		t.Fatalf("trimmed contents = %+v, want coherent user/assistant tail", trimmed)
+	}
+}
+
+func TestBuildTranscriptAddsUserCorrectionForInvalidStateRetry(t *testing.T) {
+	history := logs.NewSessionHistory("session-retry-transcript")
+	history.Append(logs.UserMessageRecord{SessionBaseRecord: history.NextRecord("user"), Content: "Summarize."})
+	history.Append(logs.AssistantMessageRecord{SessionBaseRecord: history.NextRecord("assistant"), Content: "I will inspect."})
+	history.Append(logs.RetryRecord{SessionBaseRecord: history.NextRecord("retry"), Reason: "invalid_state_output", Attempt: 1})
+
+	messages := buildTranscript(history)
+	if len(messages) != 3 {
+		t.Fatalf("got %d messages, want 3", len(messages))
+	}
+	last := messages[len(messages)-1]
+	if last.Role != "user" || last.Kind != "retry" {
+		t.Fatalf("last message = %+v, want user retry correction", last)
+	}
+	if !strings.Contains(last.Content, "Return JSON only") {
+		t.Fatalf("retry correction = %q, want JSON-only guidance", last.Content)
 	}
 }

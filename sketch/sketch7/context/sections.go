@@ -56,6 +56,9 @@ func formatStateTask(session runtime.SessionView, history *logs.SessionHistory) 
 	if len(effectiveTools) > 0 {
 		parts = append(parts, fmt.Sprintf("Available tools: %s", joinList(effectiveTools)))
 	}
+	if len(session.Cognitive.AllowedTriggers) > 0 {
+		parts = append(parts, fmt.Sprintf("Allowed next-step signals: %s", joinList(session.Cognitive.AllowedTriggers)))
+	}
 
 	// Output requirements if any
 	if strings.TrimSpace(session.Cognitive.Outputs.SchemaName) != "" || len(session.Cognitive.Outputs.RequiredFields) > 0 {
@@ -129,7 +132,7 @@ func formatBounds(label string, bounds defs.StateBoundsContract) string {
 func effectiveEnabledTools(session runtime.SessionView) []string {
 	allowed := append([]string(nil), session.Agent.ToolNames...)
 	policyApplied := false
-	if len(session.Cognitive.EnabledTools) > 0 {
+	if len(session.Cognitive.EnabledTools) > 0 || len(session.Cognitive.VisibleTools) > 0 {
 		policyApplied = true
 		if len(allowed) == 0 {
 			allowed = append([]string(nil), session.Cognitive.EnabledTools...)
@@ -137,7 +140,7 @@ func effectiveEnabledTools(session runtime.SessionView) []string {
 			allowed = intersectPreservingOrder(allowed, session.Cognitive.EnabledTools)
 		}
 	}
-	if session.Workflow != nil && len(session.Workflow.EnabledTools) > 0 {
+	if session.Workflow != nil && (len(session.Workflow.EnabledTools) > 0 || len(session.Workflow.VisibleTools) > 0) {
 		policyApplied = true
 		if len(allowed) == 0 {
 			allowed = append([]string(nil), session.Workflow.EnabledTools...)

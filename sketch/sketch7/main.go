@@ -16,6 +16,7 @@ import (
 	"github.com/comalice/inference_sketch/sketch/sketch7/prompt"
 	"github.com/comalice/inference_sketch/sketch/sketch7/provider"
 	"github.com/comalice/inference_sketch/sketch/sketch7/runner"
+	"github.com/comalice/inference_sketch/sketch/sketch7/statecharts"
 	"github.com/comalice/inference_sketch/sketch/sketch7/tools"
 )
 
@@ -106,7 +107,11 @@ func run() error {
 		sessionHistory.AgentID = agentDef.Name
 	}
 	workflowDef, hasWorkflow := firstWorkflow(memory)
-	toolRegistry := buildToolRegistry()
+	var workflowDefPtr *defs.WorkflowDefinition
+	if hasWorkflow {
+		workflowDefPtr = &workflowDef
+	}
+	toolRegistry := buildToolRegistry(agentDef, workflowDefPtr)
 	hydratedAgent, err := compile.HydrateAgent(agentDef, modelDef, toolRegistry)
 	if err != nil {
 		return err
@@ -137,10 +142,6 @@ func run() error {
 		Projections: projections,
 		MaxHistory:  maxHistory,
 		StopToken:   args.stopToken,
-	}
-	var workflowDefPtr *defs.WorkflowDefinition
-	if hasWorkflow {
-		workflowDefPtr = &workflowDef
 	}
 	runErr := loop.Run(hydratedAgent, agentDef, workflowDefPtr, sessionHistory, workflowHistory)
 	if statePath != "" {
@@ -789,13 +790,18 @@ func providerFromEnv() (*provider.OpenAICompatibleProvider, error) {
 	}, nil
 }
 
-func buildToolRegistry() tools.Registry {
+func buildToolRegistry(agentDef defs.AgentDefinition, workflowDef *defs.WorkflowDefinition) tools.Registry {
 	root, _ := os.Getwd()
+	transitionTool := tools.TransitionTool{AgentChart: statecharts.Compile("agent", agentDef.Cognitive)}
+	if workflowDef != nil {
+		transitionTool.WorkflowChart = statecharts.Compile("workflow", workflowDef.Statechart)
+	}
 	return tools.NewRegistry(
 		tools.BindingTool{},
 		tools.UnbindTool{},
 		tools.InterruptTool{},
 		tools.ResumeTool{},
+		transitionTool,
 		tools.ListFilesTool{RootDir: root},
 		tools.ReadFileTool{RootDir: root},
 		tools.ReplaceTextTool{RootDir: root},

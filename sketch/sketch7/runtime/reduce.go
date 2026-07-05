@@ -93,10 +93,11 @@ func cognitiveViewForState(chart defs.StatechartDefinition, name string) Cogniti
 			continue
 		}
 		return CognitiveView{
-			CurrentState: state.Name,
-			VisibleTools: append([]string(nil), state.VisibleTools...),
-			EnabledTools: append([]string(nil), state.EnabledTools...),
-			Prompt:       state.Prompt,
+			CurrentState:    state.Name,
+			VisibleTools:    append([]string(nil), state.VisibleTools...),
+			EnabledTools:    append([]string(nil), state.EnabledTools...),
+			AllowedTriggers: append([]string(nil), state.AllowedTriggers...),
+			Prompt:          state.Prompt,
 			Inputs: defs.StateInputContract{
 				Required: append([]string(nil), state.Inputs.Required...),
 				Optional: append([]string(nil), state.Inputs.Optional...),

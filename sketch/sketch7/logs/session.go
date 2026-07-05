@@ -99,6 +99,7 @@ type InferenceEnvelopeRecord struct {
 	PayloadID                string
 	ModelRef                 string
 	ProviderRef              string
+	StartedAtUnixMilli       int64
 	IncludedContextRecordIDs []string
 	IncludedTranscriptKinds  []string
 	IncludedToolNames        []string
@@ -118,6 +119,7 @@ type OutputContractEvaluationRecord struct {
 	MissingFields     []string
 	WrongState        bool
 	ActionType        string
+	TransitionTrigger string
 	ToolName          string
 	CompletionSignal  bool
 	RawContentPreview string

@@ -91,9 +91,24 @@ func buildTranscript(history *logs.SessionHistory) []Message {
 			messages = append(messages, Message{Kind: "tool_call", Role: "assistant_tool_call", Name: v.ToolName, CallID: v.CallID, Content: v.Arguments})
 		case logs.ToolCallResultRecord:
 			messages = append(messages, Message{Kind: "tool_result", Role: "tool", Name: v.ToolName, CallID: v.CallID, Content: v.Content})
+		case logs.RetryRecord:
+			if retryMessage := retryCorrectionMessage(v); retryMessage != "" {
+				messages = append(messages, Message{Kind: "retry", Role: "user", Content: retryMessage})
+			}
 		}
 	}
 	return messages
+}
+
+func retryCorrectionMessage(record logs.RetryRecord) string {
+	switch record.Reason {
+	case "invalid_state_output", "invalid_finalization_output", "missing_state_output":
+		return "Previous assistant output did not satisfy the current state's output contract. Return JSON only with all required fields from the current task frame. Do not include prose outside JSON."
+	case "missing_required_arguments", "missing_required_fields", "invalid_json":
+		return "Previous output was invalid. Correct it using the current task frame and include all required fields."
+	default:
+		return ""
+	}
 }
 
 func trimMessages(messages []Message, maxMessages int) []Message {

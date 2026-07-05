@@ -1,0 +1,69 @@
+apiVersion: maelstrom/v1
+kind: Agent
+name: stateless-reader
+description: Essentially stateless read-only agent for baseline sketch7 experiments.
+model: zh-qwen36-27b-thinking
+tools:
+  - list_files
+  - search_files
+  - get_file_skeleton
+  - read_symbol
+  - find_references
+  - read_file
+context:
+  inputBudget: 24000
+  projections:
+    - type: system
+      name: system
+      prompt: >-
+        You are stateless-reader, a compact read-only repository agent. Treat each turn as a
+        fresh task. Prefer narrow evidence gathering, cite files and symbols, and keep answers
+        concise and grounded.
+    - type: repo_context
+      retentionMode: latest_effective
+    - type: state_task
+    - type: messages
+      retentionMode: coherent_tail
+cognitive:
+  initialState: respond
+  states:
+    - name: respond
+      description: Single-turn baseline state with no internal cognitive loop.
+      visibleTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      enabledTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      prompt: >-
+        Solve the user request directly. Gather only the smallest useful evidence, then answer in
+        JSON with traceable references. If the answer is complete, include "completion_signal":true.
+      inputs:
+        required: []
+        optional:
+          - user_request
+          - repo_context
+      outputs:
+        schema: reader_answer_v1
+        requiredFields:
+          - summary
+          - evidence
+          - completion_signal
+        strict: false
+      completion:
+        successWhen:
+          - answer includes concise conclusion
+          - answer cites repo evidence when claims depend on code
+      bounds:
+        maxInferenceTurns: 2
+        maxToolCalls: 4
+        maxFinalizationRetries: 1
+  transitions: []

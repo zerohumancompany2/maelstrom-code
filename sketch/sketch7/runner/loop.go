@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	ctxpkg "github.com/comalice/inference_sketch/sketch/sketch7/context"
 	"github.com/comalice/inference_sketch/sketch/sketch7/defs"
@@ -11,6 +12,7 @@ import (
 	"github.com/comalice/inference_sketch/sketch/sketch7/prompt"
 	"github.com/comalice/inference_sketch/sketch/sketch7/provider"
 	"github.com/comalice/inference_sketch/sketch/sketch7/runtime"
+	"github.com/comalice/inference_sketch/sketch/sketch7/statecharts"
 	"github.com/comalice/inference_sketch/sketch/sketch7/tools"
 )
 
@@ -31,6 +33,11 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 	for iteration := 1; ; iteration++ {
 		view := BuildSessionView(agent, agentDef, workflowDef, sessionHistory, workflowHistory)
 		ensureStateEnterRecords(sessionHistory, view)
+		if hit, reason := boundStopReason(view.Cognitive, sessionHistory); hit {
+			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: reason})
+			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: reason, Iteration: iteration})
+			return fmt.Errorf("cognitive state bound exceeded: %s", reason)
+		}
 		finalizingCognitive := runtime.ShouldFinalizeCognitive(view.Cognitive, sessionHistory)
 		payloadID := sessionHistory.NextBundleID()
 		inferencePayload := contextBuilder.Build(payloadID, ctxpkg.BuildSections(agentDef, view, sessionHistory, ctxpkg.RepoContextOptions{RootDir: ".", RefreshEveryTurns: 12, MaxFilesToInspect: 2000, MaxTopLevelEntries: 8, MaxExtensionsToShow: 5}), view, sessionHistory, workflowHistory)
@@ -44,7 +51,8 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 		}
 
 		payload := prompt.BuildPayload(agent, inferencePayload.PayloadID, sessionHistory.SessionID, assembled)
-		toolsForRequest := toolDefinitions(l.Tools)
+		effectivePolicy := effectiveToolPolicy(view)
+		toolsForRequest := toolDefinitions(l.Tools, effectivePolicy.Tools)
 		if finalizingCognitive {
 			toolsForRequest = nil
 		}
@@ -52,7 +60,9 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 		if err != nil {
 			return err
 		}
-		sessionHistory.Append(logs.InferenceEnvelopeRecord{SessionBaseRecord: sessionHistory.NextRecord("inference_envelope"), PayloadID: inferencePayload.PayloadID, ModelRef: inferencePayload.ModelRef, ProviderRef: agent.ProviderName, IncludedContextRecordIDs: contextRecordIDs(inferencePayload.Sections), IncludedTranscriptKinds: messageKinds(inferencePayload.Messages), IncludedToolNames: inferencePayload.Tools})
+		request.ResponseFormat = responseFormatForState(view.Cognitive)
+		startedAt := time.Now().UnixMilli()
+		sessionHistory.Append(logs.InferenceEnvelopeRecord{SessionBaseRecord: sessionHistory.NextRecord("inference_envelope"), PayloadID: inferencePayload.PayloadID, ModelRef: inferencePayload.ModelRef, ProviderRef: agent.ProviderName, StartedAtUnixMilli: startedAt, IncludedContextRecordIDs: contextRecordIDs(inferencePayload.Sections), IncludedTranscriptKinds: messageKinds(inferencePayload.Messages), IncludedToolNames: toolNamesForDefinitions(toolsForRequest)})
 		response, err := l.Provider.Send(request)
 		if err != nil {
 			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: "provider_error", Iteration: iteration})
@@ -84,6 +94,9 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 
 		if finalizingCognitive {
 			if finalizationEval != nil && finalizationEval.ValidationStatus == "valid" {
+				if transitioned := appendRuntimeCognitiveTransition(sessionHistory, agentDef.Cognitive, view.Cognitive, finalizationEval); transitioned {
+					continue
+				}
 				sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: "completed", ParseRecordIDs: []string{finalizationEval.RecordID()}, CompletionAccepted: true})
 				sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: true, StopReason: "state_finalized", Iteration: iteration})
 				return nil
@@ -109,6 +122,27 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: true, StopReason: "stop_token", Iteration: iteration})
 			return nil
 		}
+		if transitioned := appendRuntimeCognitiveTransition(sessionHistory, agentDef.Cognitive, view.Cognitive, finalizationEval); transitioned {
+			continue
+		}
+		if hit, reason := boundStopReason(view.Cognitive, sessionHistory); hit {
+			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: reason})
+			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: reason, Iteration: iteration})
+			return fmt.Errorf("cognitive state bound exceeded: %s", reason)
+		}
+		if finalizationEval != nil && finalizationEval.ValidationStatus == "valid" && finalizationEval.CompletionSignal {
+			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: "completed", ParseRecordIDs: []string{finalizationEval.RecordID()}, CompletionAccepted: true})
+			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: true, StopReason: "state_completed", Iteration: iteration})
+			return nil
+		}
+		if shouldRetryInvalidStateOutput(view.Cognitive, sessionHistory, finalizationEval) {
+			sessionHistory.Append(logs.RetryRecord{SessionBaseRecord: sessionHistory.NextRecord("retry"), Reason: "invalid_state_output", Attempt: logs.CountInferenceTurnsSinceStateEnter(sessionHistory, "cognitive"), Recovered: false, DerivedFrom: []string{finalizationEval.RecordID()}})
+			continue
+		}
+		if shouldRetryMissingStateOutput(view.Cognitive, finalizationEval, hasToolCalls) {
+			sessionHistory.Append(logs.RetryRecord{SessionBaseRecord: sessionHistory.NextRecord("retry"), Reason: "missing_state_output", Attempt: logs.CountInferenceTurnsSinceStateEnter(sessionHistory, "cognitive"), Recovered: false})
+			continue
+		}
 		if !hasToolCalls {
 			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: true, StopReason: "assistant_only", Iteration: iteration})
 			return nil
@@ -118,6 +152,60 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 			return fmt.Errorf("loop guard tripped")
 		}
 	}
+}
+
+func responseFormatForState(view runtime.CognitiveView) *provider.StructuredOutputFormat {
+	outputs := view.Outputs
+	if strings.TrimSpace(outputs.SchemaName) == "" || len(outputs.RequiredFields) == 0 {
+		return nil
+	}
+	fieldEnums := map[string][]string{}
+	if len(view.AllowedTriggers) > 0 {
+		fieldEnums["transition"] = append([]string(nil), view.AllowedTriggers...)
+		fieldEnums["next_step_signal"] = append([]string(nil), view.AllowedTriggers...)
+	}
+	return &provider.StructuredOutputFormat{
+		Name:           outputs.SchemaName,
+		RequiredFields: append([]string(nil), outputs.RequiredFields...),
+		FieldEnums:     fieldEnums,
+		Strict:         outputs.Strict,
+	}
+}
+
+func shouldRetryMissingStateOutput(view runtime.CognitiveView, eval *logs.OutputContractEvaluationRecord, hasToolCalls bool) bool {
+	if eval != nil || hasToolCalls || view.Bounds.MaxInferenceTurns <= 0 {
+		return false
+	}
+	return strings.TrimSpace(view.Outputs.SchemaName) != "" || len(view.Outputs.RequiredFields) > 0
+}
+
+func shouldRetryInvalidStateOutput(view runtime.CognitiveView, history *logs.SessionHistory, eval *logs.OutputContractEvaluationRecord) bool {
+	if eval == nil || eval.ValidationStatus == "valid" || view.Bounds.MaxInferenceTurns <= 0 {
+		return false
+	}
+	if strings.TrimSpace(view.Outputs.SchemaName) == "" && len(view.Outputs.RequiredFields) == 0 {
+		return false
+	}
+	return true
+}
+
+func appendRuntimeCognitiveTransition(history *logs.SessionHistory, chart defs.StatechartDefinition, view runtime.CognitiveView, eval *logs.OutputContractEvaluationRecord) bool {
+	if history == nil || eval == nil || eval.ValidationStatus != "valid" || strings.TrimSpace(eval.TransitionTrigger) == "" {
+		return false
+	}
+	trigger := strings.TrimSpace(eval.TransitionTrigger)
+	if len(view.AllowedTriggers) > 0 && !contains(view.AllowedTriggers, trigger) {
+		return false
+	}
+	machine := statecharts.Compile("agent", chart)
+	next, err := machine.Next(view.CurrentState, trigger)
+	if err != nil {
+		return false
+	}
+	history.Append(logs.StateExitRecord{SessionBaseRecord: history.NextRecord("state_exit"), Chart: "cognitive", StateName: view.CurrentState, Reason: "transition", DerivedFromIDs: []string{eval.RecordID()}, ParseRecordIDs: []string{eval.RecordID()}, CompletionAccepted: true})
+	history.Append(logs.CognitiveTransitionRecord{SessionBaseRecord: history.NextRecord("cognitive_transition"), FromState: view.CurrentState, ToState: next, Trigger: trigger, DerivedFromIDs: []string{eval.RecordID()}})
+	history.Append(logs.StateEnterRecord{SessionBaseRecord: history.NextRecord("state_enter"), Chart: "cognitive", StateName: next, DerivedFromIDs: []string{eval.RecordID()}})
+	return true
 }
 
 func ensureStateEnterRecords(history *logs.SessionHistory, view runtime.SessionView) {
@@ -223,14 +311,21 @@ func messageKinds(messages []ctxpkg.Message) []string {
 	return kinds
 }
 
-func toolDefinitions(executor tools.Executor) []provider.ToolDefinition {
+func toolDefinitions(executor tools.Executor, allowedNames []string) []provider.ToolDefinition {
 	registry, ok := executor.(tools.Registry)
-	if !ok {
+	if !ok || len(allowedNames) == 0 {
 		return nil
+	}
+	allowed := map[string]bool{}
+	for _, name := range allowedNames {
+		allowed[name] = true
 	}
 	defs := registry.Definitions()
 	converted := make([]provider.ToolDefinition, 0, len(defs))
 	for _, def := range defs {
+		if len(allowed) > 0 && !allowed[def.Name] {
+			continue
+		}
 		converted = append(converted, provider.ToolDefinition{
 			Name:        def.Name,
 			Description: def.Description,
@@ -310,8 +405,20 @@ func evaluateAssistantOutput(history *logs.SessionHistory, view runtime.Cognitiv
 	if actionType, ok := payload["action_type"].(string); ok {
 		record.ActionType = actionType
 	}
+	if transition, ok := payload["transition"].(string); ok {
+		record.TransitionTrigger = transition
+	}
+	if transition, ok := payload["next_step_signal"].(string); ok && record.TransitionTrigger == "" {
+		record.TransitionTrigger = transition
+	}
+	if record.TransitionTrigger != "" && len(view.AllowedTriggers) > 0 && !contains(view.AllowedTriggers, record.TransitionTrigger) {
+		record.ValidationStatus = "invalid_transition_signal"
+	}
 	if completion, ok := payload["completion_signal"].(bool); ok {
 		record.CompletionSignal = completion
+	}
+	if completion, ok := payload["completion_signal"].(string); ok {
+		record.CompletionSignal = strings.EqualFold(strings.TrimSpace(completion), "true")
 	}
 	missing := missingFields(payload, view.Outputs.RequiredFields)
 	record.MissingFields = missing
@@ -337,9 +444,13 @@ func evaluateAssistantOutput(history *logs.SessionHistory, view runtime.Cognitiv
 func validateToolRequest(history *logs.SessionHistory, view runtime.SessionView, call provider.ToolCall) logs.ToolValidationRecord {
 	required := requiredFieldsForTool(view.Agent.ToolNames, call.ToolName)
 	missing := missingStringMapFields(call.Arguments, required)
-	allowedTools := effectiveAllowedTools(view)
+	policy := effectiveToolPolicy(view)
+	allowedTools := policy.Tools
 	knownTool := len(view.Agent.ToolNames) == 0 || contains(view.Agent.ToolNames, call.ToolName)
-	enabledTool := len(allowedTools) == 0 || contains(allowedTools, call.ToolName)
+	enabledTool := contains(allowedTools, call.ToolName)
+	if len(allowedTools) == 0 && !policy.Applied && len(view.Agent.ToolNames) == 0 {
+		enabledTool = true
+	}
 	valid := knownTool && enabledTool && len(missing) == 0
 	reason := ""
 	if !knownTool {
@@ -361,10 +472,10 @@ func validateToolRequest(history *logs.SessionHistory, view runtime.SessionView,
 	}
 }
 
-func effectiveAllowedTools(view runtime.SessionView) []string {
+func effectiveToolPolicy(view runtime.SessionView) runtime.EffectiveToolPolicy {
 	allowed := append([]string(nil), view.Agent.ToolNames...)
 	policyApplied := false
-	if len(view.Cognitive.EnabledTools) > 0 {
+	if len(view.Cognitive.EnabledTools) > 0 || len(view.Cognitive.VisibleTools) > 0 {
 		policyApplied = true
 		if len(allowed) == 0 {
 			allowed = append([]string(nil), view.Cognitive.EnabledTools...)
@@ -372,7 +483,7 @@ func effectiveAllowedTools(view runtime.SessionView) []string {
 			allowed = intersectPreservingOrder(allowed, view.Cognitive.EnabledTools)
 		}
 	}
-	if view.Workflow != nil && len(view.Workflow.EnabledTools) > 0 {
+	if view.Workflow != nil && (len(view.Workflow.EnabledTools) > 0 || len(view.Workflow.VisibleTools) > 0) {
 		policyApplied = true
 		if len(allowed) == 0 {
 			allowed = append([]string(nil), view.Workflow.EnabledTools...)
@@ -381,9 +492,75 @@ func effectiveAllowedTools(view runtime.SessionView) []string {
 		}
 	}
 	if len(allowed) == 0 && !policyApplied {
-		return append([]string(nil), view.Agent.ToolNames...)
+		return runtime.EffectiveToolPolicy{Applied: false, Tools: append([]string(nil), view.Agent.ToolNames...)}
 	}
-	return allowed
+	return runtime.EffectiveToolPolicy{Applied: policyApplied, Tools: allowed}
+}
+
+func toolNamesForDefinitions(defs []provider.ToolDefinition) []string {
+	names := make([]string, 0, len(defs))
+	for _, def := range defs {
+		names = append(names, def.Name)
+	}
+	return names
+}
+
+func boundStopReason(view runtime.CognitiveView, history *logs.SessionHistory) (bool, string) {
+	if history == nil {
+		return false, ""
+	}
+	if view.Bounds.MaxToolCalls > 0 && logs.CountToolCallsSinceStateEnter(history, "cognitive") >= view.Bounds.MaxToolCalls {
+		if !runtime.ShouldFinalizeCognitive(view, history) {
+			return true, "max_tool_calls"
+		}
+	}
+	if view.Bounds.MaxWallTimeSeconds > 0 {
+		start := latestStateStartMillis(history, "cognitive")
+		if start > 0 && time.Now().UnixMilli()-start >= int64(view.Bounds.MaxWallTimeSeconds)*1000 {
+			if !runtime.ShouldFinalizeCognitive(view, history) {
+				return true, "max_wall_time"
+			}
+		}
+	}
+	return false, ""
+}
+
+func latestStateStartMillis(history *logs.SessionHistory, chart string) int64 {
+	if history == nil {
+		return 0
+	}
+	enterIndex := -1
+	for i := len(history.Records) - 1; i >= 0; i-- {
+		switch v := history.Records[i].(type) {
+		case logs.StateEnterRecord:
+			if v.Chart == chart {
+				enterIndex = i
+			}
+		case *logs.StateEnterRecord:
+			if v.Chart == chart {
+				enterIndex = i
+			}
+		}
+		if enterIndex != -1 {
+			break
+		}
+	}
+	if enterIndex == -1 {
+		return 0
+	}
+	for i := enterIndex + 1; i < len(history.Records); i++ {
+		switch v := history.Records[i].(type) {
+		case logs.InferenceEnvelopeRecord:
+			if v.StartedAtUnixMilli > 0 {
+				return v.StartedAtUnixMilli
+			}
+		case *logs.InferenceEnvelopeRecord:
+			if v.StartedAtUnixMilli > 0 {
+				return v.StartedAtUnixMilli
+			}
+		}
+	}
+	return 0
 }
 
 func intersectPreservingOrder(base []string, filter []string) []string {
@@ -456,7 +633,7 @@ func contains(items []string, target string) bool {
 
 func allowedOutputField(field string) bool {
 	switch field {
-	case "state", "action_type", "summary", "completion_signal", "tool", "final_response":
+	case "state", "action_type", "summary", "evidence", "decision", "risks", "transition", "next_step_signal", "completion_signal", "tool", "final_response":
 		return true
 	default:
 		return false

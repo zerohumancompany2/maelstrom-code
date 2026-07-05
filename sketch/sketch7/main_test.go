@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/comalice/inference_sketch/sketch/sketch7/defs"
 	"github.com/comalice/inference_sketch/sketch/sketch7/logs"
 )
 
@@ -246,6 +247,60 @@ func TestRunWithAggregateByAgentPrintsAggregateJSON(t *testing.T) {
 	if !strings.Contains(output, `"session_count": 1`) {
 		t.Fatalf("expected session count in output, got %s", output)
 	}
+}
+
+func TestDefaultAgentDefinitionIsSingleStateBaseline(t *testing.T) {
+	def := defaultAgentDefinition("test-model")
+	if def.Cognitive.InitialState != "observe" {
+		t.Fatalf("initialState = %q, want observe", def.Cognitive.InitialState)
+	}
+	if len(def.Cognitive.States) != 1 {
+		t.Fatalf("got %d states, want 1", len(def.Cognitive.States))
+	}
+	if len(def.Cognitive.Transitions) != 0 {
+		t.Fatalf("got %d transitions, want 0", len(def.Cognitive.Transitions))
+	}
+	state := def.Cognitive.States[0]
+	if state.Name != "observe" {
+		t.Fatalf("state name = %q, want observe", state.Name)
+	}
+	if !containsTool(state.EnabledTools, "read_file") || !containsTool(state.EnabledTools, "replace_text") {
+		t.Fatalf("enabled tools = %+v, want baseline read/edit coverage", state.EnabledTools)
+	}
+	if !hasProjection(def.Context.Projections, "state_task") {
+		t.Fatalf("projections = %+v, want state_task projection", def.Context.Projections)
+	}
+}
+
+func TestBuildToolRegistryIncludesTransitionState(t *testing.T) {
+	registry := buildToolRegistry(defs.AgentDefinition{
+		Cognitive: defs.StatechartDefinition{
+			InitialState: "observe",
+			States:       []defs.StateDefinition{{Name: "observe"}, {Name: "act"}},
+			Transitions:  []defs.TransitionDefinition{{Trigger: "go", From: "observe", To: "act"}},
+		},
+	}, nil)
+	if err := registry.MustHave("transition_state"); err != nil {
+		t.Fatalf("expected transition_state in registry: %v", err)
+	}
+}
+
+func hasProjection(itemsDef []defs.ProjectionDefinition, want string) bool {
+	for _, item := range itemsDef {
+		if item.Type == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsTool(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 func captureStdout(t *testing.T, fn func()) string {

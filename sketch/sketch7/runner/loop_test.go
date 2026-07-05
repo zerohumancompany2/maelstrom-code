@@ -225,6 +225,146 @@ func TestLoopRunPersistsAndIncludesStateTaskContextSnapshot(t *testing.T) {
 	}
 }
 
+func TestLoopRunNarrowsProviderToolsToEnabledStateTools(t *testing.T) {
+	providerScript := &scriptedProvider{responses: []provider.Response{{Outputs: []provider.Output{provider.AssistantOutput{Content: "Done."}}}}}
+	loop := Loop{
+		Provider: providerScript,
+		Tools:    tools.NewRegistry(tools.ReadFileTool{RootDir: t.TempDir()}, tools.RunCommandTool{RootDir: t.TempDir()}),
+		Projections: []prompt.Projection{
+			prompt.ContextProjection{},
+		},
+		MaxHistory: 10,
+	}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file", "run_command"}}
+	agentDef := defs.AgentDefinition{
+		Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}},
+		Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{
+			Name:         "observe",
+			VisibleTools: []string{"read_file", "run_command"},
+			EnabledTools: []string{"read_file"},
+			Prompt:       "Gather evidence with read-only tools.",
+		}}},
+	}
+	sessionHistory := logs.NewSessionHistory("session-state-tool-narrowing")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Inspect first."})
+
+	if err := loop.Run(agent, agentDef, nil, sessionHistory, nil); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+	if len(providerScript.requests) != 1 {
+		t.Fatalf("got %d provider requests, want 1", len(providerScript.requests))
+	}
+	if len(providerScript.requests[0].Tools) != 1 || providerScript.requests[0].Tools[0].Name != "read_file" {
+		t.Fatalf("request tools = %+v, want only read_file", providerScript.requests[0].Tools)
+	}
+	foundEnvelopeTools := false
+	for _, record := range sessionHistory.Records {
+		env, ok := record.(logs.InferenceEnvelopeRecord)
+		if !ok {
+			continue
+		}
+		foundEnvelopeTools = true
+		if len(env.IncludedToolNames) != 1 || env.IncludedToolNames[0] != "read_file" {
+			t.Fatalf("envelope tools = %+v, want only read_file", env.IncludedToolNames)
+		}
+	}
+	if !foundEnvelopeTools {
+		t.Fatal("expected inference envelope record")
+	}
+	requestText := requestText(providerScript.requests[0])
+	if !strings.Contains(requestText, "Available tools: read_file") || strings.Contains(requestText, "Available tools: read_file, run_command") {
+		t.Fatalf("request text = %q, want only read_file available", requestText)
+	}
+}
+
+func TestLoopRunDisablesProviderToolsWhenStateHasVisibleButNoEnabledTools(t *testing.T) {
+	raw, _ := json.Marshal(map[string]string{"path": "sample.txt"})
+	providerScript := &scriptedProvider{responses: repeatedToolResponses("call-disabled-empty", "read_file", map[string]string{"path": "sample.txt"}, raw, 8)}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.ReadFileTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file"}}
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "decide", States: []defs.StateDefinition{{Name: "decide", VisibleTools: []string{"read_file"}, EnabledTools: []string{}}}}}
+	sessionHistory := logs.NewSessionHistory("session-empty-enabled-tools")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Decide without tools."})
+
+	err := loop.Run(agent, agentDef, nil, sessionHistory, nil)
+	if err == nil || err.Error() != "loop guard tripped" {
+		t.Fatalf("error = %v, want loop guard after repeated disabled tool", err)
+	}
+	if len(providerScript.requests) == 0 {
+		t.Fatal("expected provider request")
+	}
+	if len(providerScript.requests[0].Tools) != 0 {
+		t.Fatalf("request tools = %+v, want none", providerScript.requests[0].Tools)
+	}
+	foundDisabled := false
+	for _, record := range sessionHistory.Records {
+		if validation, ok := record.(logs.ToolValidationRecord); ok && validation.ToolName == "read_file" && !validation.Valid && validation.Reason == "tool_not_enabled" {
+			foundDisabled = true
+		}
+	}
+	if !foundDisabled {
+		t.Fatalf("expected disabled tool validation, got %#v", sessionHistory.Records)
+	}
+}
+
+func TestEffectiveToolPolicyNoPolicyFallsBackToAgentTools(t *testing.T) {
+	view := runtime.SessionView{Agent: runtime.Agent{ToolNames: []string{"read_file", "run_command"}}, Cognitive: runtime.CognitiveView{CurrentState: "observe"}}
+	policy := effectiveToolPolicy(view)
+	if policy.Applied {
+		t.Fatal("expected unapplied tool policy")
+	}
+	if strings.Join(policy.Tools, ",") != "read_file,run_command" {
+		t.Fatalf("policy tools = %+v", policy.Tools)
+	}
+}
+
+func TestEffectiveToolPolicyAppliedEmptyIntersectionReturnsNoTools(t *testing.T) {
+	view := runtime.SessionView{Agent: runtime.Agent{ToolNames: []string{"read_file"}}, Cognitive: runtime.CognitiveView{CurrentState: "decide", VisibleTools: []string{"read_file"}, EnabledTools: []string{}}}
+	policy := effectiveToolPolicy(view)
+	if !policy.Applied {
+		t.Fatal("expected applied tool policy")
+	}
+	if len(policy.Tools) != 0 {
+		t.Fatalf("policy tools = %+v, want none", policy.Tools)
+	}
+}
+
+func TestLoopRunStopsWhenMaxToolCallsBoundExceeded(t *testing.T) {
+	raw, _ := json.Marshal(map[string]string{"path": "sample.txt"})
+	providerScript := &scriptedProvider{responses: repeatedToolResponses("call-max-tools", "read_file", map[string]string{"path": "sample.txt"}, raw, 3)}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "sample.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.ReadFileTool{RootDir: root}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file"}}
+	agentDef := defs.AgentDefinition{Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}}, Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{Name: "observe", Prompt: "Inspect briefly.", EnabledTools: []string{"read_file"}, Bounds: defs.StateBoundsContract{MaxToolCalls: 1}}}}}
+	sessionHistory := logs.NewSessionHistory("session-max-tool-calls")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Inspect first."})
+
+	err := loop.Run(agent, agentDef, nil, sessionHistory, nil)
+	if err == nil || !strings.Contains(err.Error(), "max_tool_calls") {
+		t.Fatalf("error = %v, want max_tool_calls bound failure", err)
+	}
+	foundExit := false
+	foundCompletion := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.StateExitRecord:
+			if v.Chart == "cognitive" && v.Reason == "max_tool_calls" {
+				foundExit = true
+			}
+		case logs.CompletionRecord:
+			if v.StopReason == "max_tool_calls" && !v.Completed {
+				foundCompletion = true
+			}
+		}
+	}
+	if !foundExit || !foundCompletion {
+		t.Fatalf("expected max_tool_calls exit/completion records, got %#v", sessionHistory.Records)
+	}
+}
+
 func TestLoopRunAppendsInitialStateEnterRecords(t *testing.T) {
 	providerScript := &scriptedProvider{responses: []provider.Response{{Outputs: []provider.Output{provider.AssistantOutput{Content: "Done."}}}}}
 	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
@@ -481,13 +621,197 @@ func TestLoopRunRecordsOutputContractEvaluationForAssistantJSON(t *testing.T) {
 				foundEval = true
 			}
 		case logs.CompletionRecord:
-			if v.Completed && v.StopReason == "assistant_only" {
+			if v.Completed && v.StopReason == "state_completed" {
 				foundCompletion = true
 			}
 		}
 	}
 	if !foundEval || !foundCompletion {
 		t.Fatalf("expected output evaluation and completion records, got %#v", sessionHistory.Records)
+	}
+}
+
+func TestLoopRunTransitionsCognitiveStateFromValidAssistantSignal(t *testing.T) {
+	providerScript := &scriptedProvider{responses: []provider.Response{
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"summary":"observed","evidence":["sketch/sketch7/runner/loop.go"],"transition":"observed"}`}}},
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"summary":"acted","completion_signal":true}`}}},
+	}}
+	loop := Loop{
+		Provider: providerScript,
+		Tools:    tools.NewRegistry(),
+		Projections: []prompt.Projection{
+			prompt.ContextProjection{},
+		},
+		MaxHistory: 10,
+	}
+	agent := runtime.Agent{Name: "ooda", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := defs.AgentDefinition{
+		Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}},
+		Cognitive: defs.StatechartDefinition{
+			InitialState: "observe",
+			States: []defs.StateDefinition{
+				{
+					Name:            "observe",
+					Prompt:          "Observe and emit transition when ready.",
+					AllowedTriggers: []string{"observed"},
+					Outputs:         defs.StateOutputContract{SchemaName: "cognitive_step_v1", RequiredFields: []string{"summary", "evidence", "transition"}},
+				},
+				{
+					Name:    "act",
+					Prompt:  "Act and complete.",
+					Outputs: defs.StateOutputContract{SchemaName: "cognitive_step_v1", RequiredFields: []string{"summary", "completion_signal"}},
+				},
+			},
+			Transitions: []defs.TransitionDefinition{{Trigger: "observed", From: "observe", To: "act"}},
+		},
+	}
+	sessionHistory := logs.NewSessionHistory("session-runtime-transition")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Inspect sketch7."})
+
+	if err := loop.Run(agent, agentDef, nil, sessionHistory, nil); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+
+	foundTransition := false
+	foundActEnter := false
+	foundCompletion := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.CognitiveTransitionRecord:
+			if v.FromState == "observe" && v.ToState == "act" && v.Trigger == "observed" {
+				foundTransition = true
+			}
+		case logs.StateEnterRecord:
+			if v.Chart == "cognitive" && v.StateName == "act" {
+				foundActEnter = true
+			}
+		case logs.CompletionRecord:
+			if v.Completed && v.StopReason == "state_completed" {
+				foundCompletion = true
+			}
+		case logs.ToolCallRequestRecord:
+			if v.ToolName == "transition_state" {
+				t.Fatalf("runtime transition must not require transition_state tool call: %#v", sessionHistory.Records)
+			}
+		}
+	}
+	if !foundTransition || !foundActEnter || !foundCompletion {
+		t.Fatalf("expected runtime transition and completion, got %#v", sessionHistory.Records)
+	}
+	if len(providerScript.requests) != 2 {
+		t.Fatalf("got %d provider requests, want 2", len(providerScript.requests))
+	}
+	if providerScript.requests[0].ResponseFormat == nil || providerScript.requests[0].ResponseFormat.Name != "cognitive_step_v1" {
+		t.Fatalf("request response format = %+v, want cognitive_step_v1", providerScript.requests[0].ResponseFormat)
+	}
+	if len(providerScript.requests[0].ResponseFormat.RequiredFields) != 3 || providerScript.requests[0].ResponseFormat.RequiredFields[2] != "transition" {
+		t.Fatalf("request response format = %+v, want transition required", providerScript.requests[0].ResponseFormat)
+	}
+	if len(providerScript.requests[0].ResponseFormat.FieldEnums["transition"]) != 1 || providerScript.requests[0].ResponseFormat.FieldEnums["transition"][0] != "observed" {
+		t.Fatalf("request response format = %+v, want observed transition enum", providerScript.requests[0].ResponseFormat)
+	}
+}
+
+func TestEvaluateAssistantOutputRejectsDisallowedTransitionSignal(t *testing.T) {
+	history := logs.NewSessionHistory("session-invalid-transition-signal")
+	view := runtime.CognitiveView{
+		CurrentState:    "observe",
+		AllowedTriggers: []string{"observed"},
+		Outputs:         defs.StateOutputContract{SchemaName: "cognitive_step_v1", RequiredFields: []string{"summary", "evidence", "transition"}},
+	}
+	eval := evaluateAssistantOutput(history, view, provider.AssistantOutput{Content: `{"summary":"done","evidence":"repo context","transition":"complete"}`}, "assistant-1")
+	if eval == nil {
+		t.Fatal("expected output evaluation")
+	}
+	if eval.ValidationStatus != "invalid_transition_signal" {
+		t.Fatalf("ValidationStatus = %q, want invalid_transition_signal", eval.ValidationStatus)
+	}
+}
+
+func TestLoopRunRetriesInvalidStateOutputBeforeAssistantOnlyCompletion(t *testing.T) {
+	providerScript := &scriptedProvider{responses: []provider.Response{
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `not json`}}},
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"summary":"done","completion_signal":true}`}}},
+	}}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "reader", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := defs.AgentDefinition{
+		Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}},
+		Cognitive: defs.StatechartDefinition{InitialState: "respond", States: []defs.StateDefinition{{
+			Name:    "respond",
+			Prompt:  "Return JSON.",
+			Outputs: defs.StateOutputContract{SchemaName: "reader_answer_v1", RequiredFields: []string{"summary", "completion_signal"}},
+			Bounds:  defs.StateBoundsContract{MaxInferenceTurns: 2, MaxFinalizationRetries: 1},
+		}}},
+	}
+	sessionHistory := logs.NewSessionHistory("session-invalid-state-output-retry")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Summarize."})
+
+	if err := loop.Run(agent, agentDef, nil, sessionHistory, nil); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+
+	foundRetry := false
+	foundCompletion := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.RetryRecord:
+			if v.Reason == "invalid_state_output" {
+				foundRetry = true
+			}
+		case logs.CompletionRecord:
+			if v.Completed && v.StopReason == "state_completed" {
+				foundCompletion = true
+			}
+		}
+	}
+	if !foundRetry || !foundCompletion {
+		t.Fatalf("expected invalid output retry and state completion, got %#v", sessionHistory.Records)
+	}
+	if len(providerScript.requests) != 2 {
+		t.Fatalf("got %d provider requests, want 2", len(providerScript.requests))
+	}
+}
+
+func TestLoopRunRetriesMissingStateOutputBeforeAssistantOnlyCompletion(t *testing.T) {
+	providerScript := &scriptedProvider{responses: []provider.Response{
+		{Outputs: nil},
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"summary":"done","completion_signal":"true"}`}}},
+	}}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "reader", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := defs.AgentDefinition{
+		Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}},
+		Cognitive: defs.StatechartDefinition{InitialState: "respond", States: []defs.StateDefinition{{
+			Name:    "respond",
+			Prompt:  "Return JSON.",
+			Outputs: defs.StateOutputContract{SchemaName: "reader_answer_v1", RequiredFields: []string{"summary", "completion_signal"}},
+			Bounds:  defs.StateBoundsContract{MaxInferenceTurns: 2, MaxFinalizationRetries: 1},
+		}}},
+	}
+	sessionHistory := logs.NewSessionHistory("session-missing-state-output-retry")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Summarize."})
+
+	if err := loop.Run(agent, agentDef, nil, sessionHistory, nil); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+
+	foundRetry := false
+	foundCompletion := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.RetryRecord:
+			if v.Reason == "missing_state_output" {
+				foundRetry = true
+			}
+		case logs.CompletionRecord:
+			if v.Completed && v.StopReason == "state_completed" {
+				foundCompletion = true
+			}
+		}
+	}
+	if !foundRetry || !foundCompletion {
+		t.Fatalf("expected missing output retry and state completion, got %#v", sessionHistory.Records)
 	}
 }
 

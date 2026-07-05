@@ -97,6 +97,26 @@ func TestLoadAgentParsesStateBounds(t *testing.T) {
 	}
 }
 
+func TestLoadAgentParsesOODAReaderShape(t *testing.T) {
+	raw := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: ooda-reader\nmodel: zh-qwen36-27b-thinking\ntools:\n  - read_file\ncontext:\n  inputBudget: 24000\n  projections:\n    - type: system\n      name: system\n      prompt: You are an OODA agent.\n    - type: state_task\n    - type: messages\n      retentionMode: coherent_tail\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      allowedTriggers: [observed]\n      enabledTools: [read_file]\n      outputs:\n        schema: cognitive_step_v1\n        requiredFields: [summary, evidence, transition]\n    - name: orient\n      allowedTriggers: [oriented]\n      enabledTools: [read_file]\n    - name: decide\n      allowedTriggers: [decided]\n      enabledTools: []\n    - name: act\n      enabledTools: [read_file]\n  transitions:\n    - trigger: observed\n      from: observe\n      to: orient\n    - trigger: oriented\n      from: orient\n      to: decide\n    - trigger: decided\n      from: decide\n      to: act\n")
+	def, err := LoadAgent(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if def.Cognitive.InitialState != "observe" {
+		t.Fatalf("InitialState = %q, want observe", def.Cognitive.InitialState)
+	}
+	if len(def.Cognitive.States) != 4 {
+		t.Fatalf("got %d states, want 4", len(def.Cognitive.States))
+	}
+	if len(def.Cognitive.Transitions) != 3 {
+		t.Fatalf("got %d transitions, want 3", len(def.Cognitive.Transitions))
+	}
+	if def.Cognitive.States[2].Name != "decide" || len(def.Cognitive.States[2].AllowedTriggers) != 1 || def.Cognitive.States[2].AllowedTriggers[0] != "decided" {
+		t.Fatalf("decide state = %+v, want runtime-owned transition signal", def.Cognitive.States[2])
+	}
+}
+
 func TestLoadWorkflowParsesDefinition(t *testing.T) {
 	raw := []byte("apiVersion: maelstrom/v1\nkind: Workflow\nname: conversation-to-execution\ndescription: Chat through implementation\ncontext: Build carefully.\nstatechart:\n  initialState: chatting\n  states:\n    - name: chatting\n    - name: planning\n  transitions:\n    - trigger: commit_plan\n      from: chatting\n      to: planning\n")
 	def, err := LoadWorkflow(raw)
