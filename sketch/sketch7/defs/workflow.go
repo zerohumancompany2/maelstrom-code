@@ -47,6 +47,7 @@ type StateInputContract struct {
 type StateOutputContract struct {
 	SchemaName     string
 	RequiredFields []string
+	OptionalFields []string
 	Strict         bool
 }
 

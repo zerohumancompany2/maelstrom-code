@@ -121,6 +121,7 @@ type stateInputDocument struct {
 type stateOutputDocument struct {
 	SchemaName     string   `yaml:"schema"`
 	RequiredFields []string `yaml:"requiredFields"`
+	OptionalFields []string `yaml:"optionalFields"`
 	Strict         bool     `yaml:"strict"`
 }
 
@@ -322,6 +323,7 @@ func toStatechartDefinition(doc statechartDocument) defs.StatechartDefinition {
 			Outputs: defs.StateOutputContract{
 				SchemaName:     strings.TrimSpace(state.Outputs.SchemaName),
 				RequiredFields: append([]string(nil), state.Outputs.RequiredFields...),
+				OptionalFields: append([]string(nil), state.Outputs.OptionalFields...),
 				Strict:         state.Outputs.Strict,
 			},
 			Completion: defs.StateCompletionContract{

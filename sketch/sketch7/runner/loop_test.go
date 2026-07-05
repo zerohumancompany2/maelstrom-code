@@ -365,6 +365,26 @@ func TestLoopRunStopsWhenMaxToolCallsBoundExceeded(t *testing.T) {
 	}
 }
 
+func TestEvaluateAssistantOutputStrictAllowsOptionalFields(t *testing.T) {
+	history := logs.NewSessionHistory("session-optional-fields")
+	view := runtime.CognitiveView{
+		CurrentState: "observe",
+		Outputs: defs.StateOutputContract{
+			SchemaName:     "cognitive_step_v1",
+			RequiredFields: []string{"summary", "completion_signal"},
+			OptionalFields: []string{"evidence", "risks"},
+			Strict:         true,
+		},
+	}
+	record := evaluateAssistantOutput(history, runtime.SessionView{Cognitive: view}, runtime.FinalizationMode{}, provider.AssistantOutput{Content: `{"summary":"done","completion_signal":true,"evidence":"file review","risks":"low"}`}, "assistant-1")
+	if record == nil {
+		t.Fatal("expected output evaluation record")
+	}
+	if record.ValidationStatus != "valid" {
+		t.Fatalf("ValidationStatus = %q, want valid", record.ValidationStatus)
+	}
+}
+
 func TestLoopRunAppendsInitialStateEnterRecords(t *testing.T) {
 	providerScript := &scriptedProvider{responses: []provider.Response{{Outputs: []provider.Output{provider.AssistantOutput{Content: "Done."}}}}}
 	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
@@ -402,7 +422,7 @@ func TestLoopRunAppendsInitialStateEnterRecords(t *testing.T) {
 }
 
 func TestLoopRunFinalizesCognitiveStateWhenInferenceBoundHit(t *testing.T) {
-	providerScript := &scriptedProvider{responses: []provider.Response{{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"summary":"done"}`}}}}}
+	providerScript := &scriptedProvider{responses: []provider.Response{{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"cognitive":{"summary":"done"}}`}}}}}
 	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.ReadFileTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
 	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file"}}
 	agentDef := boundedFinalizationAgentDef(1, 0)
@@ -444,7 +464,7 @@ func TestLoopRunFinalizesCognitiveStateWhenInferenceBoundHit(t *testing.T) {
 func TestLoopRunRetriesInvalidFinalizationOnceByDefault(t *testing.T) {
 	providerScript := &scriptedProvider{responses: []provider.Response{
 		{Outputs: []provider.Output{provider.AssistantOutput{Content: `not json`}}},
-		{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"summary":"recovered"}`}}},
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"cognitive":{"summary":"recovered"}}`}}},
 	}}
 	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.ReadFileTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
 	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file"}}
@@ -719,7 +739,7 @@ func TestEvaluateAssistantOutputRejectsDisallowedTransitionSignal(t *testing.T) 
 		AllowedTriggers: []string{"observed"},
 		Outputs:         defs.StateOutputContract{SchemaName: "cognitive_step_v1", RequiredFields: []string{"summary", "evidence", "transition"}},
 	}
-	eval := evaluateAssistantOutput(history, view, provider.AssistantOutput{Content: `{"summary":"done","evidence":"repo context","transition":"complete"}`}, "assistant-1")
+	eval := evaluateAssistantOutput(history, runtime.SessionView{Cognitive: view}, runtime.FinalizationMode{}, provider.AssistantOutput{Content: `{"summary":"done","evidence":"repo context","transition":"complete"}`}, "assistant-1")
 	if eval == nil {
 		t.Fatal("expected output evaluation")
 	}

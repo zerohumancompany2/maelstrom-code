@@ -166,7 +166,7 @@ func toOpenAIResponseFormat(format *StructuredOutputFormat, hasTools bool) any {
 	if hasTools {
 		return map[string]any{"type": "json_object"}
 	}
-	schema := structuredOutputJSONSchema(format.RequiredFields, format.FieldEnums, format.Strict)
+	schema := structuredOutputJSONSchema(format.RequiredFields, format.OptionalFields, format.FieldTypes, format.FieldEnums, format.Strict)
 	return map[string]any{
 		"type": "json_schema",
 		"json_schema": map[string]any{
@@ -177,14 +177,24 @@ func toOpenAIResponseFormat(format *StructuredOutputFormat, hasTools bool) any {
 	}
 }
 
-func structuredOutputJSONSchema(required []string, enums map[string][]string, strict bool) map[string]any {
+func structuredOutputJSONSchema(required []string, optional []string, fieldTypes map[string]string, enums map[string][]string, strict bool) map[string]any {
 	properties := map[string]any{}
 	for _, field := range required {
 		field = strings.TrimSpace(field)
 		if field == "" {
 			continue
 		}
-		properties[field] = outputFieldSchema(field, enums[field])
+		properties[field] = outputFieldSchema(field, fieldTypes[field], enums[field])
+	}
+	for _, field := range optional {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		if _, exists := properties[field]; exists {
+			continue
+		}
+		properties[field] = outputFieldSchema(field, fieldTypes[field], enums[field])
 	}
 	schema := map[string]any{
 		"type":       "object",
@@ -197,8 +207,12 @@ func structuredOutputJSONSchema(required []string, enums map[string][]string, st
 	return schema
 }
 
-func outputFieldSchema(_ string, enumValues []string) map[string]any {
-	schema := map[string]any{"type": "string"}
+func outputFieldSchema(_ string, fieldType string, enumValues []string) map[string]any {
+	typeName := strings.TrimSpace(fieldType)
+	if typeName == "" {
+		typeName = "string"
+	}
+	schema := map[string]any{"type": typeName}
 	if len(enumValues) > 0 {
 		values := make([]any, 0, len(enumValues))
 		for _, value := range enumValues {

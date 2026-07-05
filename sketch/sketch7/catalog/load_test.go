@@ -97,6 +97,18 @@ func TestLoadAgentParsesStateBounds(t *testing.T) {
 	}
 }
 
+func TestLoadAgentParsesOptionalOutputFields(t *testing.T) {
+	raw := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: optional-output-agent\nmodel: glm-4.5-air\ncontext:\n  inputBudget: 1000\n  projections: []\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      outputs:\n        schema: cognitive_step_v1\n        requiredFields: [summary, completion_signal]\n        optionalFields: [evidence, risks]\n        strict: true\n  transitions: []\n")
+	def, err := LoadAgent(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	outputs := def.Cognitive.States[0].Outputs
+	if len(outputs.OptionalFields) != 2 || outputs.OptionalFields[0] != "evidence" || outputs.OptionalFields[1] != "risks" {
+		t.Fatalf("OptionalFields = %+v, want [evidence risks]", outputs.OptionalFields)
+	}
+}
+
 func TestLoadAgentParsesOODAReaderShape(t *testing.T) {
 	raw := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: ooda-reader\nmodel: zh-qwen36-27b-thinking\ntools:\n  - read_file\ncontext:\n  inputBudget: 24000\n  projections:\n    - type: system\n      name: system\n      prompt: You are an OODA agent.\n    - type: state_task\n    - type: messages\n      retentionMode: coherent_tail\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      allowedTriggers: [observed]\n      enabledTools: [read_file]\n      outputs:\n        schema: cognitive_step_v1\n        requiredFields: [summary, evidence, transition]\n    - name: orient\n      allowedTriggers: [oriented]\n      enabledTools: [read_file]\n    - name: decide\n      allowedTriggers: [decided]\n      enabledTools: []\n    - name: act\n      enabledTools: [read_file]\n  transitions:\n    - trigger: observed\n      from: observe\n      to: orient\n    - trigger: oriented\n      from: orient\n      to: decide\n    - trigger: decided\n      from: decide\n      to: act\n")
 	def, err := LoadAgent(raw)

@@ -35,6 +35,8 @@ type Request struct {
 type StructuredOutputFormat struct {
 	Name           string
 	RequiredFields []string
+	OptionalFields []string
+	FieldTypes     map[string]string
 	FieldEnums     map[string][]string
 	Strict         bool
 }

@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -33,12 +32,13 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 	for iteration := 1; ; iteration++ {
 		view := BuildSessionView(agent, agentDef, workflowDef, sessionHistory, workflowHistory)
 		ensureStateEnterRecords(sessionHistory, view)
+		finalizationMode := runtime.ResolveFinalizationMode(view.Cognitive, view.Workflow, sessionHistory)
 		if hit, reason := boundStopReason(view.Cognitive, sessionHistory); hit {
 			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: reason})
 			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: reason, Iteration: iteration})
 			return fmt.Errorf("cognitive state bound exceeded: %s", reason)
 		}
-		finalizingCognitive := runtime.ShouldFinalizeCognitive(view.Cognitive, sessionHistory)
+		finalizingCognitive := finalizationMode.IsFinalizing && finalizationMode.RequireCognitive
 		payloadID := sessionHistory.NextBundleID()
 		inferencePayload := contextBuilder.Build(payloadID, ctxpkg.BuildSections(agentDef, view, sessionHistory, ctxpkg.RepoContextOptions{RootDir: ".", RefreshEveryTurns: 12, MaxFilesToInspect: 2000, MaxTopLevelEntries: 8, MaxExtensionsToShow: 5}), view, sessionHistory, workflowHistory)
 		if finalizingCognitive {
@@ -72,7 +72,7 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 		hasToolCalls := false
 		var finalizationEval *logs.OutputContractEvaluationRecord
 		for _, output := range response.Outputs {
-			records, workflowRecords, err := l.consumeProviderOutput(view, sessionHistory, workflowHistory, output, finalizingCognitive)
+			records, workflowRecords, err := l.consumeProviderOutput(view, finalizationMode, sessionHistory, workflowHistory, output, finalizingCognitive)
 			if err != nil {
 				sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: "tool_execution_error", Iteration: iteration})
 				return err
@@ -160,13 +160,17 @@ func responseFormatForState(view runtime.CognitiveView) *provider.StructuredOutp
 		return nil
 	}
 	fieldEnums := map[string][]string{}
+	fieldTypes := map[string]string{}
 	if len(view.AllowedTriggers) > 0 {
 		fieldEnums["transition"] = append([]string(nil), view.AllowedTriggers...)
 		fieldEnums["next_step_signal"] = append([]string(nil), view.AllowedTriggers...)
 	}
+	fieldTypes["completion_signal"] = "boolean"
 	return &provider.StructuredOutputFormat{
 		Name:           outputs.SchemaName,
 		RequiredFields: append([]string(nil), outputs.RequiredFields...),
+		OptionalFields: append([]string(nil), outputs.OptionalFields...),
+		FieldTypes:     fieldTypes,
 		FieldEnums:     fieldEnums,
 		Strict:         outputs.Strict,
 	}
@@ -336,11 +340,11 @@ func toolDefinitions(executor tools.Executor, allowedNames []string) []provider.
 	return converted
 }
 
-func (l Loop) consumeProviderOutput(view runtime.SessionView, history *logs.SessionHistory, workflowHistory *logs.WorkflowHistory, output provider.Output, finalizing bool) ([]logs.SessionRecord, []logs.WorkflowRecord, error) {
+func (l Loop) consumeProviderOutput(view runtime.SessionView, finalizationMode runtime.FinalizationMode, history *logs.SessionHistory, workflowHistory *logs.WorkflowHistory, output provider.Output, finalizing bool) ([]logs.SessionRecord, []logs.WorkflowRecord, error) {
 	switch v := output.(type) {
 	case provider.AssistantOutput:
 		assistant := logs.AssistantMessageRecord{SessionBaseRecord: history.NextRecord("assistant"), Content: v.Content, Reasoning: v.Reasoning}
-		record := evaluateAssistantOutput(history, view.Cognitive, v, assistant.RecordID())
+		record := evaluateAssistantOutput(history, view, finalizationMode, v, assistant.RecordID())
 		records := []logs.SessionRecord{assistant}
 		if record != nil {
 			records = append(records, *record)
@@ -370,75 +374,6 @@ func (l Loop) consumeProviderOutput(view runtime.SessionView, history *logs.Sess
 	default:
 		return nil, nil, fmt.Errorf("unknown provider output %T", output)
 	}
-}
-
-func evaluateAssistantOutput(history *logs.SessionHistory, view runtime.CognitiveView, output provider.AssistantOutput, sourceRecordID string) *logs.OutputContractEvaluationRecord {
-	if strings.TrimSpace(view.Outputs.SchemaName) == "" && len(view.Outputs.RequiredFields) == 0 {
-		return nil
-	}
-	record := logs.OutputContractEvaluationRecord{
-		SessionBaseRecord: history.NextRecord("output_contract_evaluation"),
-		StateName:         view.CurrentState,
-		Chart:             "cognitive",
-		SchemaName:        view.Outputs.SchemaName,
-		SourceRecordID:    sourceRecordID,
-		HostVersion:       hostVersion,
-		ParserVersion:     outputParserVersion,
-		ParseStatus:       "plain_text",
-		ValidationStatus:  "missing_schema_output",
-		RequiredFields:    append([]string(nil), view.Outputs.RequiredFields...),
-		MissingFields:     append([]string(nil), view.Outputs.RequiredFields...),
-		RawContentPreview: truncatePreview(output.Content),
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(output.Content), &payload); err != nil {
-		return &record
-	}
-	record.ParseStatus = "valid_json"
-	record.ValidationStatus = "valid"
-	if state, ok := payload["state"].(string); ok {
-		if state != "" && state != view.CurrentState {
-			record.WrongState = true
-			record.ValidationStatus = "wrong_state"
-		}
-	}
-	if actionType, ok := payload["action_type"].(string); ok {
-		record.ActionType = actionType
-	}
-	if transition, ok := payload["transition"].(string); ok {
-		record.TransitionTrigger = transition
-	}
-	if transition, ok := payload["next_step_signal"].(string); ok && record.TransitionTrigger == "" {
-		record.TransitionTrigger = transition
-	}
-	if record.TransitionTrigger != "" && len(view.AllowedTriggers) > 0 && !contains(view.AllowedTriggers, record.TransitionTrigger) {
-		record.ValidationStatus = "invalid_transition_signal"
-	}
-	if completion, ok := payload["completion_signal"].(bool); ok {
-		record.CompletionSignal = completion
-	}
-	if completion, ok := payload["completion_signal"].(string); ok {
-		record.CompletionSignal = strings.EqualFold(strings.TrimSpace(completion), "true")
-	}
-	missing := missingFields(payload, view.Outputs.RequiredFields)
-	record.MissingFields = missing
-	if len(missing) > 0 {
-		record.ValidationStatus = "missing_required_fields"
-	}
-	if toolPayload, ok := payload["tool"].(map[string]any); ok {
-		if name, ok := toolPayload["name"].(string); ok {
-			record.ToolName = name
-		}
-	}
-	if record.ValidationStatus == "valid" && view.Outputs.Strict {
-		for key := range payload {
-			if !allowedOutputField(key) {
-				record.ValidationStatus = "unknown_fields"
-				break
-			}
-		}
-	}
-	return &record
 }
 
 func validateToolRequest(history *logs.SessionHistory, view runtime.SessionView, call provider.ToolCall) logs.ToolValidationRecord {
@@ -573,16 +508,6 @@ func intersectPreservingOrder(base []string, filter []string) []string {
 	return result
 }
 
-func missingFields(payload map[string]any, required []string) []string {
-	missing := make([]string, 0)
-	for _, field := range required {
-		if _, ok := payload[field]; !ok {
-			missing = append(missing, field)
-		}
-	}
-	return missing
-}
-
 func missingStringMapFields(payload map[string]string, required []string) []string {
 	missing := make([]string, 0)
 	for _, field := range required {
@@ -629,15 +554,6 @@ func contains(items []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func allowedOutputField(field string) bool {
-	switch field {
-	case "state", "action_type", "summary", "evidence", "decision", "risks", "transition", "next_step_signal", "completion_signal", "tool", "final_response":
-		return true
-	default:
-		return false
-	}
 }
 
 func truncatePreview(content string) string {

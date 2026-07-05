@@ -21,6 +21,8 @@ func TestOpenAICompatibleProviderBuildsChatCompletionsBody(t *testing.T) {
 		ResponseFormat: &StructuredOutputFormat{
 			Name:           "reader-answer-v1",
 			RequiredFields: []string{"summary", "evidence", "completion_signal"},
+			OptionalFields: []string{"risks"},
+			FieldTypes:     map[string]string{"completion_signal": "boolean"},
 			FieldEnums:     map[string][]string{"transition": []string{"observed"}},
 			Strict:         true,
 		},
@@ -69,6 +71,8 @@ func TestOpenAICompatibleProviderBuildsJSONSchemaResponseFormatWithoutTools(t *t
 		ResponseFormat: &StructuredOutputFormat{
 			Name:           "reader-answer-v1",
 			RequiredFields: []string{"summary", "evidence", "transition"},
+			OptionalFields: []string{"completion_signal"},
+			FieldTypes:     map[string]string{"completion_signal": "boolean"},
 			FieldEnums:     map[string][]string{"transition": []string{"observed"}},
 			Strict:         true,
 		},
@@ -100,6 +104,10 @@ func TestOpenAICompatibleProviderBuildsJSONSchemaResponseFormatWithoutTools(t *t
 	enumValues, ok := transition["enum"].([]any)
 	if !ok || len(enumValues) != 1 || enumValues[0] != "observed" {
 		t.Fatalf("transition enum = %#v, want [observed]", transition["enum"])
+	}
+	completionSignal := properties["completion_signal"].(map[string]any)
+	if completionSignal["type"] != "boolean" {
+		t.Fatalf("completion_signal schema = %#v, want boolean type", completionSignal)
 	}
 }
 

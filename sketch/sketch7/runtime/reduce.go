@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"strings"
+
 	"github.com/comalice/inference_sketch/sketch/sketch7/defs"
 	"github.com/comalice/inference_sketch/sketch/sketch7/logs"
 )
@@ -105,6 +107,7 @@ func cognitiveViewForState(chart defs.StatechartDefinition, name string) Cogniti
 			Outputs: defs.StateOutputContract{
 				SchemaName:     state.Outputs.SchemaName,
 				RequiredFields: append([]string(nil), state.Outputs.RequiredFields...),
+				OptionalFields: append([]string(nil), state.Outputs.OptionalFields...),
 				Strict:         state.Outputs.Strict,
 			},
 			Completion: defs.StateCompletionContract{
@@ -150,6 +153,27 @@ func ShouldFinalizeCognitive(view CognitiveView, history *logs.SessionHistory) b
 	return IsCognitiveBoundHit(view, history)
 }
 
+func ResolveFinalizationMode(cognitive CognitiveView, workflow *WorkflowView, history *logs.SessionHistory) FinalizationMode {
+	mode := FinalizationMode{}
+	if ShouldFinalizeCognitive(cognitive, history) {
+		mode.IsFinalizing = true
+		mode.RequireCognitive = true
+		mode.RetryAttempt = logs.CountFinalizationRetriesSinceStateEnter(history, "cognitive") + 1
+	}
+	if workflow == nil {
+		return mode
+	}
+	if workflowRequiresFinalization(*workflow) {
+		mode.IsFinalizing = true
+		mode.RequireWorkflow = true
+	}
+	return mode
+}
+
+func workflowRequiresFinalization(view WorkflowView) bool {
+	return strings.TrimSpace(view.Outputs.SchemaName) != "" && len(view.Outputs.RequiredFields) > 0
+}
+
 // GetMaxFinalizationRetries returns the max finalization retries, defaulting to 1 if not set.
 func GetMaxFinalizationRetries(bounds defs.StateBoundsContract) int {
 	if bounds.MaxFinalizationRetries <= 0 {
@@ -176,6 +200,7 @@ func stateContractsForState(chart defs.StatechartDefinition, name string) (defs.
 			}, defs.StateOutputContract{
 				SchemaName:     state.Outputs.SchemaName,
 				RequiredFields: append([]string(nil), state.Outputs.RequiredFields...),
+				OptionalFields: append([]string(nil), state.Outputs.OptionalFields...),
 				Strict:         state.Outputs.Strict,
 			}, defs.StateCompletionContract{
 				SuccessWhen: append([]string(nil), state.Completion.SuccessWhen...),
