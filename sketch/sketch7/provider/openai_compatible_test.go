@@ -335,3 +335,62 @@ func TestOpenAICompatibleProviderSurfacesInBodyErrorEnvelope(t *testing.T) {
 		t.Fatalf("err = %v, want in-body provider error surfaced", err)
 	}
 }
+
+func TestParseOpenAIResponsePromotesReasoningWhenContentEmpty(t *testing.T) {
+	resp, err := parseOpenAIResponse(openAIChatResponse{
+		Choices: []struct {
+			Message openAIMessage `json:"message"`
+		}{
+			{Message: openAIMessage{Role: "assistant", Content: "", Reasoning: `{"cognitive":{"summary":"done"}}`}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Outputs) != 1 {
+		t.Fatalf("outputs = %d, want 1", len(resp.Outputs))
+	}
+	assistant, ok := resp.Outputs[0].(AssistantOutput)
+	if !ok || assistant.Content != `{"cognitive":{"summary":"done"}}` {
+		t.Fatalf("output = %#v, want reasoning promoted to content", resp.Outputs[0])
+	}
+}
+
+func TestParseOpenAIResponseUsesReasoningContentFallback(t *testing.T) {
+	resp, err := parseOpenAIResponse(openAIChatResponse{
+		Choices: []struct {
+			Message openAIMessage `json:"message"`
+		}{
+			{Message: openAIMessage{Role: "assistant", Content: "", ReasoningContent: "local-style reasoning"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Outputs) != 1 {
+		t.Fatalf("outputs = %d, want 1", len(resp.Outputs))
+	}
+	assistant := resp.Outputs[0].(AssistantOutput)
+	if assistant.Content != "local-style reasoning" {
+		t.Fatalf("content = %q, want reasoning_content fallback", assistant.Content)
+	}
+}
+
+func TestParseOpenAIResponseKeepsToolCallsOverReasoning(t *testing.T) {
+	resp, err := parseOpenAIResponse(openAIChatResponse{
+		Choices: []struct {
+			Message openAIMessage `json:"message"`
+		}{
+			{Message: openAIMessage{Role: "assistant", Content: "", Reasoning: "thinking...", ToolCalls: []openAIToolCall{{ID: "c1", Type: "function", Function: openAIFunctionCall{Name: "read_file", Arguments: `{"path":"a.go"}`}}}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Outputs) != 1 {
+		t.Fatalf("outputs = %d, want tool call only", len(resp.Outputs))
+	}
+	if _, ok := resp.Outputs[0].(ToolRequestOutput); !ok {
+		t.Fatalf("output = %#v, want ToolRequestOutput", resp.Outputs[0])
+	}
+}

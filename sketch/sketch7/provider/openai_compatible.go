@@ -35,6 +35,11 @@ type openAIMessage struct {
 	Content    string           `json:"content,omitempty"`
 	ToolCallID string           `json:"tool_call_id,omitempty"`
 	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
+	// Reasoning carries thinking output; OpenRouter normalizes to
+	// "reasoning" while vLLM/llama.cpp style backends use
+	// "reasoning_content". Never serialized on requests.
+	Reasoning        string `json:"reasoning,omitempty"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 type openAITool struct {
@@ -280,8 +285,19 @@ func parseOpenAIResponse(resp openAIChatResponse) (Response, error) {
 	if len(outputs) > 0 {
 		return Response{Outputs: outputs}, nil
 	}
-	if strings.TrimSpace(msg.Content) != "" {
-		outputs = append(outputs, AssistantOutput{Content: msg.Content})
+	reasoning := msg.Reasoning
+	if strings.TrimSpace(reasoning) == "" {
+		reasoning = msg.ReasoningContent
+	}
+	content := msg.Content
+	if strings.TrimSpace(content) == "" && strings.TrimSpace(reasoning) != "" {
+		// Some backends (e.g. GLM via DeepInfra) route the whole answer into
+		// the reasoning channel and return empty content on constrained
+		// turns; promote it so the output contract can judge it.
+		content = reasoning
+	}
+	if strings.TrimSpace(content) != "" {
+		outputs = append(outputs, AssistantOutput{Content: content, Reasoning: reasoning})
 	}
 	return Response{Outputs: outputs}, nil
 }
