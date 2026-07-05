@@ -160,6 +160,7 @@ func ReduceSessionStats(history *SessionHistory) SessionStats {
 	stats.SessionID = history.SessionID
 	stats.AgentID = history.AgentID
 	index := buildRecordIndex(history)
+	recoveredRetries := computeRecoveredRetries(history, index)
 	latestCognitiveState := ""
 	latestWorkflowState := ""
 	finalAssistant := ""
@@ -205,10 +206,10 @@ func ReduceSessionStats(history *SessionHistory) SessionStats {
 			stats = reduceToolValidation(stats, *v)
 		case RetryRecord:
 			stats.RecordCounts.Retries++
-			stats = reduceRetry(stats, v, index)
+			stats = reduceRetry(stats, v, index, recoveredRetries[v.RecordID()])
 		case *RetryRecord:
 			stats.RecordCounts.Retries++
-			stats = reduceRetry(stats, *v, index)
+			stats = reduceRetry(stats, *v, index, recoveredRetries[v.RecordID()])
 		case CompletionRecord:
 			stats.RecordCounts.Completions++
 			stats = reduceCompletion(stats, v, latestCognitiveState, latestWorkflowState)
@@ -322,7 +323,7 @@ func reduceToolResult(stats SessionStats, toolName string, isError bool) Session
 	return stats
 }
 
-func reduceRetry(stats SessionStats, record RetryRecord, index map[string]SessionRecord) SessionStats {
+func reduceRetry(stats SessionStats, record RetryRecord, index map[string]SessionRecord, recovered bool) SessionStats {
 	stats.Retry.Total++
 	incrementIfPresent(stats.Retry.ByReason, record.Reason)
 	incrementIfPresent(stats.RetryByReason, record.Reason)
@@ -330,12 +331,74 @@ func reduceRetry(stats SessionStats, record RetryRecord, index map[string]Sessio
 	incrementIfPresent(stats.Retry.Attribution.ByCauseKind, attribution.CauseKind)
 	incrementIfPresent(stats.Retry.Attribution.ByTool, attribution.ToolName)
 	incrementIfPresent(stats.Retry.Attribution.ByState, attribution.StateName)
-	if record.Recovered {
+	if record.Recovered || recovered {
 		stats.Retry.Recovered++
 	} else {
 		stats.Retry.Unrecovered++
 	}
 	return stats
+}
+
+// computeRecoveredRetries pairs each retry with a later success signal. The
+// runtime appends retries before knowing the outcome, so recovery is derived
+// at reduce time: output-contract retries recover when a later evaluation
+// validates, and missing-argument retries recover when the same tool later
+// passes validation.
+func computeRecoveredRetries(history *SessionHistory, index map[string]SessionRecord) map[string]bool {
+	recovered := map[string]bool{}
+	if history == nil {
+		return recovered
+	}
+	pendingOutput := []string{}
+	pendingByTool := map[string][]string{}
+	markTool := func(name string) {
+		for _, id := range pendingByTool[name] {
+			recovered[id] = true
+		}
+		delete(pendingByTool, name)
+	}
+	handleRetry := func(record RetryRecord) {
+		switch record.Reason {
+		case "invalid_state_output", "missing_state_output", "invalid_finalization_output", "missing_required_fields", "invalid_json":
+			pendingOutput = append(pendingOutput, record.RecordID())
+		case "missing_required_arguments":
+			tool := resolveRetryAttribution(record, index).ToolName
+			pendingByTool[tool] = append(pendingByTool[tool], record.RecordID())
+		}
+	}
+	handleEval := func(record OutputContractEvaluationRecord) {
+		if record.ValidationStatus != "valid" {
+			return
+		}
+		for _, id := range pendingOutput {
+			recovered[id] = true
+		}
+		pendingOutput = pendingOutput[:0]
+	}
+	handleToolValidation := func(record ToolValidationRecord) {
+		if !record.Valid {
+			return
+		}
+		markTool(record.ToolName)
+		markTool("")
+	}
+	for _, record := range history.Records {
+		switch v := record.(type) {
+		case RetryRecord:
+			handleRetry(v)
+		case *RetryRecord:
+			handleRetry(*v)
+		case OutputContractEvaluationRecord:
+			handleEval(v)
+		case *OutputContractEvaluationRecord:
+			handleEval(*v)
+		case ToolValidationRecord:
+			handleToolValidation(v)
+		case *ToolValidationRecord:
+			handleToolValidation(*v)
+		}
+	}
+	return recovered
 }
 
 func reduceCompletion(stats SessionStats, record CompletionRecord, latestCognitiveState, latestWorkflowState string) SessionStats {

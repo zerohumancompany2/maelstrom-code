@@ -196,3 +196,40 @@ func TestReduceSessionStatsAttributesRetryFromOutputRecord(t *testing.T) {
 		t.Fatalf("retry state/tool attribution = %+v", stats.Retry.Attribution)
 	}
 }
+
+func TestReduceSessionStatsMarksRetriesRecoveredByLaterSuccess(t *testing.T) {
+	history := NewSessionHistory("session-104")
+	invalid := OutputContractEvaluationRecord{SessionBaseRecord: history.NextRecord("output_contract_evaluation"), StateName: "observe", ValidationStatus: "missing_schema_output"}
+	history.Append(invalid)
+	history.Append(RetryRecord{SessionBaseRecord: history.NextRecord("retry"), Reason: "invalid_state_output", Attempt: 1, DerivedFrom: []string{invalid.RecordID()}})
+	history.Append(RetryRecord{SessionBaseRecord: history.NextRecord("retry"), Reason: "missing_state_output", Attempt: 2})
+	valid := OutputContractEvaluationRecord{SessionBaseRecord: history.NextRecord("output_contract_evaluation"), StateName: "observe", ValidationStatus: "valid"}
+	history.Append(valid)
+	history.Append(RetryRecord{SessionBaseRecord: history.NextRecord("retry"), Reason: "invalid_finalization_output", Attempt: 1})
+
+	stats := ReduceSessionStats(history)
+	if stats.Retry.Total != 3 || stats.Retry.Recovered != 2 || stats.Retry.Unrecovered != 1 {
+		t.Fatalf("retry stats = %+v, want 2 recovered by later valid output and 1 unrecovered", stats.Retry)
+	}
+}
+
+func TestReduceSessionStatsMarksArgumentRetryRecoveredByLaterValidToolCall(t *testing.T) {
+	history := NewSessionHistory("session-105")
+	failed := ToolValidationRecord{SessionBaseRecord: history.NextRecord("tool_validation"), CallID: "call-1", ToolName: "read_file", Valid: false, Reason: "missing_required_arguments", MissingFields: []string{"path"}}
+	history.Append(failed)
+	history.Append(RetryRecord{SessionBaseRecord: history.NextRecord("retry"), Reason: "missing_required_arguments", Attempt: 1, DerivedFrom: []string{failed.RecordID()}})
+	otherTool := ToolValidationRecord{SessionBaseRecord: history.NextRecord("tool_validation"), CallID: "call-2", ToolName: "list_files", Valid: true}
+	history.Append(otherTool)
+
+	stats := ReduceSessionStats(history)
+	if stats.Retry.Recovered != 0 || stats.Retry.Unrecovered != 1 {
+		t.Fatalf("retry stats = %+v, want unrecovered while only a different tool validated", stats.Retry)
+	}
+
+	fixed := ToolValidationRecord{SessionBaseRecord: history.NextRecord("tool_validation"), CallID: "call-3", ToolName: "read_file", Valid: true}
+	history.Append(fixed)
+	stats = ReduceSessionStats(history)
+	if stats.Retry.Recovered != 1 || stats.Retry.Unrecovered != 0 {
+		t.Fatalf("retry stats = %+v, want recovered after same tool validated", stats.Retry)
+	}
+}
