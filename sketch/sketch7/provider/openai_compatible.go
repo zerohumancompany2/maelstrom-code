@@ -25,7 +25,6 @@ type openAIChatRequest struct {
 	Messages           []openAIMessage `json:"messages"`
 	Tools              []openAITool    `json:"tools,omitempty"`
 	Temperature        float64         `json:"temperature,omitempty"`
-	Stop               []string        `json:"stop,omitempty"`
 	ResponseFormat     any             `json:"response_format,omitempty"`
 	ChatTemplateKwargs map[string]any  `json:"chat_template_kwargs,omitempty"`
 }
@@ -147,16 +146,16 @@ func (p *OpenAICompatibleProvider) buildHTTPBody(request Request) ([]byte, error
 			},
 		})
 	}
+	// Never send stop sequences on tool-bearing requests: a "</tool_call>"
+	// stop (a qwen-template hack) truncated native tool-call generation on
+	// mistral/gemma/nemotron via OpenRouter, yielding empty or prose-only
+	// turns instead of tool calls.
 	chatReq := openAIChatRequest{
 		Model:              request.ModelRef,
 		Messages:           messages,
 		Tools:              tools,
-		Stop:               []string{"</tool_call>"},
 		ResponseFormat:     toOpenAIResponseFormat(request.ResponseFormat, len(tools) > 0),
 		ChatTemplateKwargs: map[string]any{"enable_thinking": false},
-	}
-	if len(tools) == 0 {
-		chatReq.Stop = nil
 	}
 	return json.Marshal(chatReq)
 }

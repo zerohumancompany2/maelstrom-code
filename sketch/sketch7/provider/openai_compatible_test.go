@@ -45,9 +45,8 @@ func TestOpenAICompatibleProviderBuildsChatCompletionsBody(t *testing.T) {
 	if !ok || len(tools) != 1 {
 		t.Fatalf("tools = %#v, want 1 tool", decoded["tools"])
 	}
-	stop, ok := decoded["stop"].([]any)
-	if !ok || len(stop) != 1 || stop[0] != "</tool_call>" {
-		t.Fatalf("stop = %#v, want [</tool_call>]", decoded["stop"])
+	if _, ok := decoded["stop"]; ok {
+		t.Fatalf("stop = %#v, want omitted so native tool-call generation is not truncated", decoded["stop"])
 	}
 	if responseFormat, ok := decoded["response_format"]; ok {
 		t.Fatalf("response_format = %#v, want omitted when tools are exposed so tool calling is not suppressed", responseFormat)
