@@ -6,6 +6,10 @@ description: >
   control, synthesis, and workflow cases use stateless-reader. Synthesis cases
   approximate the python fixed-evidence-bundle setup end-to-end with directed
   prompts plus keyword checks. Run from the repo root.
+models:
+  - sketch/sketch7/models/openrouter-qwen3-coder-30b.yaml
+  - sketch/sketch7/models/openrouter-minimax-m2.5.yaml
+  - sketch/sketch7/models/openrouter-glm-4.7-flash.yaml
 timeoutSeconds: 240
 cases:
   # --- discovery.context_inference.* ---
