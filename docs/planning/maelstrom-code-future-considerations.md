@@ -166,7 +166,22 @@ ended in provider errors (timeouts, transport failures). Live OpenRouter
 batches occasionally hit slow constrained-decoding backends, so a
 `--retry-failed` (or error-aware resume) mode may become worth adding once
 error rates are observed across real batteries. Until then, rerunning into a
-fresh output file is an acceptable manual workaround.
+fresh output file is an acceptable manual workaround. (A cruder workaround is
+also proven: strip the errored rows from the JSONL and rerun the deck; resume
+retries anything not recorded.)
+
+### 11. Per-model provider routing hints
+
+OpenRouter routes each request across whichever upstream providers host the
+model, and battery-004 showed the cost of that: qwen3.6-27b bounced between
+Alibaba, Io Net, and Chutes with visibly different constrained-decoding
+quality and intermittent provider errors, while single-provider models
+(gemma3-27b on DeepInfra only) go fully unavailable when that host is
+rate-limited. If routing variance keeps polluting battery readouts, model
+YAMLs could grow an optional provider allow/order hint that the
+OpenAI-compatible provider forwards as OpenRouter's `provider` routing field.
+Defer until the variance is shown to change decisions, not just widen error
+bars; higher deck `repeats` is the cheaper first answer.
 
 ## Anti-goals
 
