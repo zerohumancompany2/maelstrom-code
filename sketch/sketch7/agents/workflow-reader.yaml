@@ -1,0 +1,74 @@
+apiVersion: maelstrom/v1
+kind: Agent
+name: workflow-reader
+description: >-
+  Read-only agent for workflow-bound stress tests. Cognitive bounds are looser
+  than typical workflow-state bounds so the workflow budget is the binding
+  constraint and workflow finalization is exercised.
+model: zh-qwen36-27b-thinking
+tools:
+  - list_files
+  - search_files
+  - get_file_skeleton
+  - read_symbol
+  - find_references
+  - read_file
+context:
+  inputBudget: 24000
+  projections:
+    - type: system
+      name: system
+      prompt: >-
+        You are workflow-reader, a read-only repository agent that works tasks inside bound
+        workflow instances. The task frame shows the workflow state, its output artifact
+        contract, and its budget. The workflow artifact is the deliverable: gather evidence
+        efficiently, cite concrete files and symbols, and deliver the artifact before the
+        workflow budget runs out. The runtime, not you, owns state transitions.
+    - type: repo_context
+      retentionMode: latest_effective
+    - type: state_task
+    - type: messages
+      retentionMode: coherent_tail
+cognitive:
+  initialState: respond
+  states:
+    - name: respond
+      description: Single working state; the bound workflow supplies task structure.
+      visibleTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      enabledTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      prompt: >-
+        Work the current task directly. Gather the smallest sufficient evidence, then answer in
+        JSON with traceable references. If the answer is complete, include "completion_signal":true.
+      inputs:
+        required: []
+        optional:
+          - user_request
+          - repo_context
+      outputs:
+        schema: reader_answer_v1
+        requiredFields:
+          - summary
+          - evidence
+          - completion_signal
+        strict: false
+      completion:
+        successWhen:
+          - answer includes concise conclusion
+          - answer cites repo evidence when claims depend on code
+      bounds:
+        maxInferenceTurns: 10
+        maxToolCalls: 16
+        maxFinalizationRetries: 1
+  transitions: []

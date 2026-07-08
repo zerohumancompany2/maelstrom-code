@@ -1,0 +1,91 @@
+name: workflow-triage
+description: >
+  Tier 1 workflow stress test (docs/planning/maelstrom-code-workflow-stress-test-plan.md).
+  A single agent binds to the issue-triage workflow whose triaging state
+  declares the triage_v1 artifact and tight bounds, so the workflow budget
+  forces workflow (or combined) finalization mid-task. workflow-reader cases
+  isolate workflow finalization (cognitive bounds looser than workflow
+  bounds); the ooda-reader case exercises the cognitive+workflow seam; the
+  control case runs the same prompt without a workflow to isolate
+  workflow-scaffold cost. Run from the repo root.
+models:
+  - sketch/sketch7/models/openrouter-qwen3-coder-30b.yaml
+  - sketch/sketch7/models/openrouter-minimax-m2.5.yaml
+  - sketch/sketch7/models/openrouter-glm-4.7-flash.yaml
+timeoutSeconds: 300
+cases:
+  - id: triage-bug-report
+    agent: sketch/sketch7/agents/workflow-reader.yaml
+    workflow: sketch/sketch7/workflows/issue-triage.yaml
+    repeats: 2
+    prompt: >
+      Bug report: when a combined finalization turn fails validation, retry
+      counting may be wrong — retries might be charged against only one
+      chart's window instead of both the cognitive and workflow windows.
+      Triage this report against the sketch/sketch7 runner and runtime
+      packages: decide whether it is a real bug, cite the evidence you
+      inspected, and name the suspect files.
+    eval:
+      require_completed: true
+      min_valid_workflow_outputs: 1
+      max_invalid_workflow_outputs: 1
+      required_final_workflow_state: done
+      max_invalid_tool_proposals: 2
+      max_tool_execution_failures: 1
+      max_unrecovered_retries: 2
+
+  - id: triage-feature-request
+    agent: sketch/sketch7/agents/workflow-reader.yaml
+    workflow: sketch/sketch7/workflows/issue-triage.yaml
+    repeats: 2
+    prompt: >
+      Feature request: model definitions should support per-model provider
+      routing hints, such as a preferred provider order with fallbacks, that
+      hydration respects when selecting a provider. Triage this request
+      against sketch/sketch7: decide its scope and feasibility, cite the
+      evidence you inspected, and name the files that would need to change.
+    eval:
+      require_completed: true
+      min_valid_workflow_outputs: 1
+      max_invalid_workflow_outputs: 1
+      required_final_workflow_state: done
+      max_invalid_tool_proposals: 2
+      max_tool_execution_failures: 1
+      max_unrecovered_retries: 2
+
+  - id: triage-combined-ooda
+    agent: sketch/sketch7/agents/ooda-reader.yaml
+    workflow: sketch/sketch7/workflows/issue-triage.yaml
+    repeats: 2
+    prompt: >
+      Bug report: when a combined finalization turn fails validation, retry
+      counting may be wrong — retries might be charged against only one
+      chart's window instead of both the cognitive and workflow windows.
+      Triage this report against the sketch/sketch7 runner and runtime
+      packages: decide whether it is a real bug, cite the evidence you
+      inspected, and name the suspect files.
+    eval:
+      min_valid_workflow_outputs: 1
+      max_invalid_workflow_outputs: 2
+      required_final_workflow_state: done
+      max_invalid_tool_proposals: 2
+      max_tool_execution_failures: 1
+      max_unrecovered_retries: 3
+
+  - id: control-bug-report
+    agent: sketch/sketch7/agents/workflow-reader.yaml
+    repeats: 2
+    prompt: >
+      Bug report: when a combined finalization turn fails validation, retry
+      counting may be wrong — retries might be charged against only one
+      chart's window instead of both the cognitive and workflow windows.
+      Triage this report against the sketch/sketch7 runner and runtime
+      packages: decide whether it is a real bug, cite the evidence you
+      inspected, and name the suspect files.
+    eval:
+      require_completed: true
+      max_invalid_outputs: 2
+      max_missing_required: 2
+      max_invalid_tool_proposals: 2
+      max_tool_execution_failures: 1
+      max_unrecovered_retries: 2

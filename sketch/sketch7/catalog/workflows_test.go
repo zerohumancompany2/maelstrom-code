@@ -47,6 +47,29 @@ func loadRepositoryWorkflows(t *testing.T) *Memory {
 	return memory
 }
 
+func TestRepositoryAgentsLoad(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "agents", "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob agents: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no agent files found")
+	}
+	memory := NewMemory()
+	for _, file := range files {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("failed to read agent file %s: %v", file, err)
+		}
+		if err := LoadIntoMemory(memory, raw); err != nil {
+			t.Fatalf("failed to load agent %s: %v", file, err)
+		}
+	}
+	if _, ok := memory.GetAgent("workflow-reader"); !ok {
+		t.Fatal("expected workflow-reader agent in memory")
+	}
+}
+
 func TestRepositoryWorkflowIssueTriageLoads(t *testing.T) {
 	memory := loadRepositoryWorkflows(t)
 	def, ok := memory.GetWorkflow("issue-triage")
