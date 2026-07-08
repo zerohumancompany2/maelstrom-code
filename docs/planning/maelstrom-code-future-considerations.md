@@ -197,6 +197,46 @@ outcomes) that this can be added later as a reducer change without new
 record kinds. Defer until multi-session workflows are actually exercised;
 single-binding workflows dominate the near-term use cases.
 
+### 13. Orchestration stays above the core
+
+The core is multi-agent in *definition*, single-session in *execution*, and
+orchestration-free in *decision*:
+
+- **In the core**: the catalog ingesting N agent/model/workflow YAMLs as
+  available data; the *mechanics* of binding (binding records, bound-session
+  views, workflow tool-policy intersection, workflow history mirroring,
+  finalization). The core can execute any of its agents in a session,
+  optionally bound to a workflow instance. It is purely reactive: it executes
+  what it is handed and never initiates work on its own.
+- **Orchestration (on top of the core, or adjacent via an API)**: the
+  *decision* to bind — which agent, which workflow instance, when, in what
+  sequence — plus inter-agent glue, triggers, schedules, and queues.
+
+Litmus test: if a feature requires the runtime to *initiate* work or to
+*route* information between sessions, it belongs in orchestration. Holding N
+agents as data is core; choosing among them is not.
+
+Corollaries:
+
+- "Handoff" is never a core concept. Agent B binding to a workflow whose
+  history contains agent A's finalized outputs *is* the handoff; the core
+  sees only a binding and a durable ledger. Communication between agents is
+  shared durable workflow state, nothing else — no message bus.
+- `bind_workflow` as an in-session tool is the one deliberately porous spot:
+  the binding *mechanism* lives in the core, and orchestration governs
+  whether an agent may self-bind via tool policy (enable/disable per
+  agent/state). If self-binding proves problematic, restrict it with policy
+  rather than adding core logic.
+- The first orchestrator should be embarrassingly small: the eval harness
+  sequencing sessions against one persisted workflow instance is already a
+  primitive orchestrator. A real orchestration layer gets designed only
+  after workflow evals show what the binding-decision problem actually looks
+  like.
+- Workflow definitions may eventually carry role/capability *hints* as data
+  (e.g. what kind of agent a state expects), but the runtime must never act
+  on them; only orchestration interprets them. If a `nextAgent:`-style field
+  ever influences the loop, the boundary has been lost.
+
 ## Anti-goals
 
 These are not absolute forever bans, but they should be resisted unless there is strong evidence.
