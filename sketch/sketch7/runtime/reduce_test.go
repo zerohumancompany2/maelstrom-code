@@ -246,3 +246,135 @@ func TestReduceInteractionModeResumableWhenLatestRecordIsResume(t *testing.T) {
 		t.Fatalf("Reason = %q, want %q", view.Reason, "user finished guidance")
 	}
 }
+
+func finalizationTestCognitiveView(maxTurns, maxToolCalls int) CognitiveView {
+	return CognitiveView{
+		CurrentState: "working",
+		Outputs:      defs.StateOutputContract{SchemaName: "cognitive_step_v1", RequiredFields: []string{"summary"}},
+		Bounds:       defs.StateBoundsContract{MaxInferenceTurns: maxTurns, MaxToolCalls: maxToolCalls},
+	}
+}
+
+func finalizationTestWorkflowView(maxTurns, maxToolCalls int) WorkflowView {
+	return WorkflowView{
+		WorkflowID:   "workflow-fin",
+		CurrentState: "triaging",
+		Outputs:      defs.StateOutputContract{SchemaName: "triage_v1", RequiredFields: []string{"decision"}},
+		Bounds:       defs.StateBoundsContract{MaxInferenceTurns: maxTurns, MaxToolCalls: maxToolCalls},
+	}
+}
+
+func appendStateEnter(history *logs.SessionHistory, chart, state string) {
+	history.Append(logs.StateEnterRecord{SessionBaseRecord: history.NextRecord("state_enter"), Chart: chart, StateName: state})
+}
+
+func appendInferenceEnvelopes(history *logs.SessionHistory, count int) {
+	for i := 0; i < count; i++ {
+		history.Append(logs.InferenceEnvelopeRecord{SessionBaseRecord: history.NextRecord("inference_envelope"), PayloadID: "p", ModelRef: "m", ProviderRef: "prov"})
+	}
+}
+
+func appendToolCallRequests(history *logs.SessionHistory, count int) {
+	for i := 0; i < count; i++ {
+		history.Append(logs.ToolCallRequestRecord{SessionBaseRecord: history.NextRecord("tool_call_request"), CallID: "c", ToolName: "read_file"})
+	}
+}
+
+func TestResolveFinalizationModeCognitiveOnlyWithReason(t *testing.T) {
+	history := logs.NewSessionHistory("session-fin-cog")
+	appendStateEnter(history, "cognitive", "working")
+	appendToolCallRequests(history, 3)
+
+	cognitive := finalizationTestCognitiveView(0, 3)
+	mode := ResolveFinalizationMode(cognitive, nil, history)
+	if !mode.IsFinalizing || !mode.RequireCognitive || mode.RequireWorkflow {
+		t.Fatalf("mode = %+v, want cognitive-only finalization", mode)
+	}
+	if mode.Reason != "cognitive_max_tool_calls" {
+		t.Fatalf("Reason = %q, want cognitive_max_tool_calls", mode.Reason)
+	}
+	if mode.RetryAttempt != 1 {
+		t.Fatalf("RetryAttempt = %d, want 1", mode.RetryAttempt)
+	}
+}
+
+func TestResolveFinalizationModeWorkflowOnlyBoundDriven(t *testing.T) {
+	history := logs.NewSessionHistory("session-fin-wf")
+	appendStateEnter(history, "workflow", "triaging")
+	appendStateEnter(history, "cognitive", "working")
+	appendInferenceEnvelopes(history, 2)
+
+	cognitive := finalizationTestCognitiveView(4, 0)
+	workflow := finalizationTestWorkflowView(2, 0)
+	mode := ResolveFinalizationMode(cognitive, &workflow, history)
+	if !mode.IsFinalizing || mode.RequireCognitive || !mode.RequireWorkflow {
+		t.Fatalf("mode = %+v, want workflow-only finalization", mode)
+	}
+	if mode.Reason != "workflow_max_inference_turns" {
+		t.Fatalf("Reason = %q, want workflow_max_inference_turns", mode.Reason)
+	}
+}
+
+func TestResolveFinalizationModeCombinedJoinsReasons(t *testing.T) {
+	history := logs.NewSessionHistory("session-fin-combined")
+	appendStateEnter(history, "workflow", "triaging")
+	appendStateEnter(history, "cognitive", "working")
+	appendInferenceEnvelopes(history, 2)
+
+	cognitive := finalizationTestCognitiveView(2, 0)
+	workflow := finalizationTestWorkflowView(2, 0)
+	mode := ResolveFinalizationMode(cognitive, &workflow, history)
+	if !mode.IsFinalizing || !mode.RequireCognitive || !mode.RequireWorkflow {
+		t.Fatalf("mode = %+v, want combined finalization", mode)
+	}
+	if mode.Reason != "cognitive_max_inference_turns+workflow_max_inference_turns" {
+		t.Fatalf("Reason = %q, want joined reasons", mode.Reason)
+	}
+}
+
+func TestResolveFinalizationModeWorkflowContractAloneDoesNotFinalize(t *testing.T) {
+	history := logs.NewSessionHistory("session-fin-nobound")
+	appendStateEnter(history, "workflow", "triaging")
+	appendStateEnter(history, "cognitive", "working")
+	appendInferenceEnvelopes(history, 1)
+
+	cognitive := finalizationTestCognitiveView(0, 0)
+	// Outputs declared but no bounds: presence of a contract must not force
+	// finalization on its own.
+	workflow := finalizationTestWorkflowView(0, 0)
+	mode := ResolveFinalizationMode(cognitive, &workflow, history)
+	if mode.IsFinalizing || mode.RequireWorkflow {
+		t.Fatalf("mode = %+v, want no finalization from contract presence alone", mode)
+	}
+}
+
+func TestWorkflowBoundHitReasonRequiresOutputContract(t *testing.T) {
+	history := logs.NewSessionHistory("session-fin-nocontract")
+	appendStateEnter(history, "workflow", "triaging")
+	appendInferenceEnvelopes(history, 5)
+
+	workflow := WorkflowView{CurrentState: "triaging", Bounds: defs.StateBoundsContract{MaxInferenceTurns: 2}}
+	if reason := WorkflowBoundHitReason(workflow, history); reason != "" {
+		t.Fatalf("reason = %q, want empty without output contract", reason)
+	}
+}
+
+func TestMaxFinalizationRetriesForModeTakesLargestParticipatingBudget(t *testing.T) {
+	cognitive := finalizationTestCognitiveView(2, 0)
+	cognitive.Bounds.MaxFinalizationRetries = 1
+	workflow := finalizationTestWorkflowView(2, 0)
+	workflow.Bounds.MaxFinalizationRetries = 3
+
+	combined := FinalizationMode{IsFinalizing: true, RequireCognitive: true, RequireWorkflow: true}
+	if got := MaxFinalizationRetriesForMode(combined, cognitive, &workflow); got != 3 {
+		t.Fatalf("combined budget = %d, want 3", got)
+	}
+	cognitiveOnly := FinalizationMode{IsFinalizing: true, RequireCognitive: true}
+	if got := MaxFinalizationRetriesForMode(cognitiveOnly, cognitive, &workflow); got != 1 {
+		t.Fatalf("cognitive-only budget = %d, want 1", got)
+	}
+	workflowOnly := FinalizationMode{IsFinalizing: true, RequireWorkflow: true}
+	if got := MaxFinalizationRetriesForMode(workflowOnly, cognitive, &workflow); got != 3 {
+		t.Fatalf("workflow-only budget = %d, want 3", got)
+	}
+}

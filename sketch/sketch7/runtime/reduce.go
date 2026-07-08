@@ -12,7 +12,11 @@ type FinalizationMode struct {
 	IsFinalizing     bool
 	RequireCognitive bool
 	RequireWorkflow  bool
-	RetryAttempt     int
+	// Reason records which bound(s) forced finalization, e.g.
+	// "cognitive_max_tool_calls" or
+	// "cognitive_max_inference_turns+workflow_max_tool_calls".
+	Reason       string
+	RetryAttempt int
 }
 
 func ReduceCognitiveState(history *logs.SessionHistory, initialState string, chart defs.StatechartDefinition) CognitiveView {
@@ -134,23 +138,39 @@ func toolPolicyForState(chart defs.StatechartDefinition, name string) ([]string,
 	return nil, nil
 }
 
+// CognitiveBoundHitReason returns the exhausted cognitive budget
+// ("max_inference_turns" or "max_tool_calls"), or "" when no bound is hit.
+// A non-empty reason is only reported when cognitive outputs are declared,
+// since finalization needs a contract to finalize against; exhausting a
+// budget then forces finalization instead of failing the session.
+func CognitiveBoundHitReason(view CognitiveView, history *logs.SessionHistory) string {
+	return boundHitReason(view.Outputs, view.Bounds, history, "cognitive")
+}
+
+// WorkflowBoundHitReason mirrors CognitiveBoundHitReason for the bound
+// workflow state, counting budgets since the latest workflow state enter.
+func WorkflowBoundHitReason(view WorkflowView, history *logs.SessionHistory) string {
+	return boundHitReason(view.Outputs, view.Bounds, history, "workflow")
+}
+
+func boundHitReason(outputs defs.StateOutputContract, bounds defs.StateBoundsContract, history *logs.SessionHistory, chart string) string {
+	// Outputs must be declared for finalization mode to apply.
+	if strings.TrimSpace(outputs.SchemaName) == "" && len(outputs.RequiredFields) == 0 {
+		return ""
+	}
+	if bounds.MaxInferenceTurns > 0 && logs.CountInferenceTurnsSinceStateEnter(history, chart) >= bounds.MaxInferenceTurns {
+		return "max_inference_turns"
+	}
+	if bounds.MaxToolCalls > 0 && logs.CountToolCallsSinceStateEnter(history, chart) >= bounds.MaxToolCalls {
+		return "max_tool_calls"
+	}
+	return ""
+}
+
 // IsCognitiveBoundHit checks if the cognitive state's inference-turn or
-// tool-call budget has been exhausted. Returns true only when cognitive
-// outputs are declared, since finalization needs a contract to finalize
-// against; exhausting a budget then forces finalization instead of failing
-// the session.
+// tool-call budget has been exhausted.
 func IsCognitiveBoundHit(view CognitiveView, history *logs.SessionHistory) bool {
-	// Cognitive outputs must be declared for finalization mode to apply.
-	if view.Outputs.SchemaName == "" && len(view.Outputs.RequiredFields) == 0 {
-		return false
-	}
-	if view.Bounds.MaxInferenceTurns > 0 && logs.CountInferenceTurnsSinceStateEnter(history, "cognitive") >= view.Bounds.MaxInferenceTurns {
-		return true
-	}
-	if view.Bounds.MaxToolCalls > 0 && logs.CountToolCallsSinceStateEnter(history, "cognitive") >= view.Bounds.MaxToolCalls {
-		return true
-	}
-	return false
+	return CognitiveBoundHitReason(view, history) != ""
 }
 
 // ShouldFinalizeCognitive checks if we should enter cognitive finalization mode.
@@ -158,25 +178,37 @@ func ShouldFinalizeCognitive(view CognitiveView, history *logs.SessionHistory) b
 	return IsCognitiveBoundHit(view, history)
 }
 
-func ResolveFinalizationMode(cognitive CognitiveView, workflow *WorkflowView, history *logs.SessionHistory) FinalizationMode {
-	mode := FinalizationMode{}
-	if ShouldFinalizeCognitive(cognitive, history) {
-		mode.IsFinalizing = true
-		mode.RequireCognitive = true
-		mode.RetryAttempt = logs.CountFinalizationRetriesSinceStateEnter(history, "cognitive") + 1
-	}
-	if workflow == nil {
-		return mode
-	}
-	if workflowRequiresFinalization(*workflow) {
-		mode.IsFinalizing = true
-		mode.RequireWorkflow = true
-	}
-	return mode
+// ShouldFinalizeWorkflow checks if we should enter workflow finalization mode
+// for the bound workflow state.
+func ShouldFinalizeWorkflow(view WorkflowView, history *logs.SessionHistory) bool {
+	return WorkflowBoundHitReason(view, history) != ""
 }
 
-func workflowRequiresFinalization(view WorkflowView) bool {
-	return strings.TrimSpace(view.Outputs.SchemaName) != "" && len(view.Outputs.RequiredFields) > 0
+func ResolveFinalizationMode(cognitive CognitiveView, workflow *WorkflowView, history *logs.SessionHistory) FinalizationMode {
+	mode := FinalizationMode{}
+	reasons := []string{}
+	if reason := CognitiveBoundHitReason(cognitive, history); reason != "" {
+		mode.IsFinalizing = true
+		mode.RequireCognitive = true
+		reasons = append(reasons, "cognitive_"+reason)
+	}
+	if workflow != nil {
+		if reason := WorkflowBoundHitReason(*workflow, history); reason != "" {
+			mode.IsFinalizing = true
+			mode.RequireWorkflow = true
+			reasons = append(reasons, "workflow_"+reason)
+		}
+	}
+	if !mode.IsFinalizing {
+		return mode
+	}
+	mode.Reason = strings.Join(reasons, "+")
+	retryChart := "cognitive"
+	if !mode.RequireCognitive {
+		retryChart = "workflow"
+	}
+	mode.RetryAttempt = logs.CountFinalizationRetriesSinceStateEnter(history, retryChart) + 1
+	return mode
 }
 
 // GetMaxFinalizationRetries returns the max finalization retries, defaulting to 1 if not set.
@@ -192,6 +224,26 @@ func HasFinalizationRetriesExceeded(view CognitiveView, history *logs.SessionHis
 	maxRetries := GetMaxFinalizationRetries(view.Bounds)
 	retries := logs.CountFinalizationRetriesSinceStateEnter(history, "cognitive")
 	return retries >= maxRetries
+}
+
+// MaxFinalizationRetriesForMode returns the effective retry budget for the
+// active finalization mode. Combined finalization retries re-request every
+// required bucket, so the budget is the larger of the participating charts'
+// budgets.
+func MaxFinalizationRetriesForMode(mode FinalizationMode, cognitive CognitiveView, workflow *WorkflowView) int {
+	budget := 0
+	if mode.RequireCognitive {
+		budget = GetMaxFinalizationRetries(cognitive.Bounds)
+	}
+	if mode.RequireWorkflow && workflow != nil {
+		if wf := GetMaxFinalizationRetries(workflow.Bounds); wf > budget {
+			budget = wf
+		}
+	}
+	if budget <= 0 {
+		budget = 1
+	}
+	return budget
 }
 
 func stateContractsForState(chart defs.StatechartDefinition, name string) (defs.StateInputContract, defs.StateOutputContract, defs.StateCompletionContract, defs.StateBoundsContract) {
