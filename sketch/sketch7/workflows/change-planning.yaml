@@ -1,0 +1,176 @@
+apiVersion: maelstrom/v1
+kind: Workflow
+name: change-planning
+description: >-
+  A sequenced change-planning pipeline where each stage's finalized artifact
+  is the handoff to the next stage.
+context: >-
+  You are bound to one stage of a multi-agent relay. A DIFFERENT agent handles
+  the next stage and sees only the workflow artifacts, so the artifact must be
+  fully self-contained, cite concrete repository file paths and symbols, and
+  when the stage artifact is complete you must set "transition" to the stage's
+  allowed trigger.
+statechart:
+  initialState: intake
+  states:
+    - name: intake
+      description: Formalize the change request.
+      visibleTools:
+        - list_files
+        - search_files
+        - read_file
+      enabledTools:
+        - list_files
+        - search_files
+        - read_file
+      allowedTriggers:
+        - triaged
+      inputs:
+        required:
+          - user_request
+        optional:
+          - repo_context
+      outputs:
+        schema: intake_v1
+        requiredFields:
+          - request_summary
+          - unknowns
+          - transition
+        optionalFields:
+          - assumptions
+        strict: false
+      completion:
+        successWhen:
+          - request_summary restates the change request in repository terms
+          - unknowns lists what must be inspected before planning
+          - transition is "triaged" once the artifact is complete
+      bounds:
+        maxInferenceTurns: 4
+        maxToolCalls: 6
+        maxFinalizationRetries: 2
+    - name: inspecting
+      description: Inspect the repository surface relevant to the request.
+      visibleTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      enabledTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      allowedTriggers:
+        - inspected
+      inputs:
+        required:
+          - request_summary
+          - unknowns
+      outputs:
+        schema: inspection_v1
+        requiredFields:
+          - relevant_files
+          - findings
+          - transition
+        optionalFields:
+          - open_questions
+        strict: false
+      completion:
+        successWhen:
+          - relevant_files lists concrete repository paths that the change touches
+          - findings resolve the unknowns from intake with cited evidence
+          - transition is "inspected" once the artifact is complete
+      bounds:
+        maxInferenceTurns: 6
+        maxToolCalls: 12
+        maxFinalizationRetries: 2
+    - name: planning
+      description: Produce a concrete implementation plan.
+      visibleTools:
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - read_file
+      enabledTools:
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - read_file
+      allowedTriggers:
+        - planned
+      inputs:
+        required:
+          - relevant_files
+          - findings
+      outputs:
+        schema: plan_v1
+        requiredFields:
+          - steps
+          - risks
+          - validation
+          - transition
+        strict: false
+      completion:
+        successWhen:
+          - steps name the files from inspection and the change to each
+          - risks state what could break
+          - validation states how to verify the change
+          - transition is "planned" once the artifact is complete
+      bounds:
+        maxInferenceTurns: 5
+        maxToolCalls: 8
+        maxFinalizationRetries: 2
+    - name: reviewing
+      description: Review the plan against the repository evidence.
+      visibleTools:
+        - search_files
+        - read_symbol
+        - find_references
+        - read_file
+      enabledTools:
+        - search_files
+        - read_symbol
+        - find_references
+        - read_file
+      allowedTriggers:
+        - reviewed
+      inputs:
+        required:
+          - steps
+          - risks
+          - validation
+      outputs:
+        schema: review_v1
+        requiredFields:
+          - verdict
+          - objections
+          - transition
+        strict: false
+      completion:
+        successWhen:
+          - verdict approves or rejects the plan on evidence
+          - objections list concrete problems or state none
+          - transition is "reviewed" once the review is complete, whether the verdict approves or rejects
+      bounds:
+        maxInferenceTurns: 4
+        maxToolCalls: 6
+        maxFinalizationRetries: 2
+    - name: done
+      description: Change plan reviewed; workflow complete.
+  transitions:
+    - trigger: triaged
+      from: intake
+      to: inspecting
+    - trigger: inspected
+      from: inspecting
+      to: planning
+    - trigger: planned
+      from: planning
+      to: reviewing
+    - trigger: reviewed
+      from: reviewing
+      to: done

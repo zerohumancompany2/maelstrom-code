@@ -1,0 +1,64 @@
+apiVersion: maelstrom/v1
+kind: Workflow
+name: issue-triage
+description: >-
+  Triage an incoming issue against this repository and produce a durable
+  triage artifact that stands alone for the next reader.
+context: >-
+  You are bound to an issue-triage workflow instance. Investigate the reported
+  issue with read-only tools, then deliver the workflow output artifact. The
+  artifact is the deliverable: cite concrete repository paths and symbols so a
+  reader who never saw this session can act on it. When the artifact is
+  complete, set "transition" to "finish".
+statechart:
+  initialState: triaging
+  states:
+    - name: triaging
+      description: Investigate the issue and commit to a triage decision.
+      visibleTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      enabledTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+      allowedTriggers:
+        - finish
+      inputs:
+        required:
+          - user_request
+        optional:
+          - repo_context
+      outputs:
+        schema: triage_v1
+        requiredFields:
+          - decision
+          - evidence
+          - suspect_files
+          - transition
+        optionalFields:
+          - notes
+        strict: false
+      completion:
+        successWhen:
+          - decision states what kind of issue this is and what should happen next
+          - evidence cites the files and symbols actually inspected
+          - suspect_files lists the repository paths most likely involved
+          - transition is "finish" once the artifact is complete
+      bounds:
+        maxInferenceTurns: 6
+        maxToolCalls: 10
+        maxFinalizationRetries: 2
+    - name: done
+      description: Triage artifact delivered; workflow complete.
+  transitions:
+    - trigger: finish
+      from: triaging
+      to: done

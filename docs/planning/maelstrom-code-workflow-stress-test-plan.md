@@ -135,7 +135,7 @@ inspecting    (outputs: inspection_v1 {relevant_files, findings})
 planning      (outputs: plan_v1 {steps, risks, validation})
   -> planned        -> reviewing
 reviewing     (outputs: review_v1 {verdict, objections})
-  -> approved       -> done
+  -> reviewed       -> done
 ```
 
 Stages bind different agents (triager → repo-reader → planner → reviewer);
