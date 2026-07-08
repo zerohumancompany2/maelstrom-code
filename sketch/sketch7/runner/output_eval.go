@@ -10,99 +10,172 @@ import (
 	"github.com/comalice/inference_sketch/sketch/sketch7/runtime"
 )
 
-func evaluateAssistantOutput(history *logs.SessionHistory, session runtime.SessionView, mode runtime.FinalizationMode, output provider.AssistantOutput, sourceRecordID string) *logs.OutputContractEvaluationRecord {
-	view := session.Cognitive
-	if strings.TrimSpace(view.Outputs.SchemaName) == "" && len(view.Outputs.RequiredFields) == 0 {
+// evaluateAssistantOutput evaluates assistant plaintext against the active
+// output contracts. During finalization it produces one evaluation record per
+// required bucket (cognitive and/or workflow); outside finalization it keeps
+// the observation-only cognitive evaluation.
+func evaluateAssistantOutput(history *logs.SessionHistory, session runtime.SessionView, mode runtime.FinalizationMode, output provider.AssistantOutput, sourceRecordID string) []logs.OutputContractEvaluationRecord {
+	if mode.IsFinalizing && (mode.RequireCognitive || mode.RequireWorkflow) {
+		return evaluateFinalizationOutput(history, session, mode, output, sourceRecordID)
+	}
+	record := evaluateObservationOutput(history, session, output, sourceRecordID)
+	if record == nil {
 		return nil
 	}
-	record := logs.OutputContractEvaluationRecord{
-		SessionBaseRecord: history.NextRecord("output_contract_evaluation"),
-		StateName:         view.CurrentState,
-		Chart:             "cognitive",
-		SchemaName:        view.Outputs.SchemaName,
-		SourceRecordID:    sourceRecordID,
-		HostVersion:       hostVersion,
-		ParserVersion:     outputParserVersion,
-		ParseStatus:       "plain_text",
-		ValidationStatus:  "missing_schema_output",
-		RequiredFields:    append([]string(nil), view.Outputs.RequiredFields...),
-		MissingFields:     append([]string(nil), view.Outputs.RequiredFields...),
-		RawContentPreview: truncatePreview(output.Content),
+	return []logs.OutputContractEvaluationRecord{*record}
+}
+
+// evaluateObservationOutput is the non-finalization path: it evaluates the
+// cognitive output contract against a flat payload or a voluntarily wrapped
+// cognitive bucket.
+func evaluateObservationOutput(history *logs.SessionHistory, session runtime.SessionView, output provider.AssistantOutput, sourceRecordID string) *logs.OutputContractEvaluationRecord {
+	view := session.Cognitive
+	if !hasOutputContract(view.Outputs) {
+		return nil
 	}
-	payload, parseStatus, validationStatus, ok := parseOutputPayload(output.Content, mode)
-	if !ok {
-		if parseStatus != "" {
-			record.ParseStatus = parseStatus
-		}
-		if validationStatus != "" {
-			record.ValidationStatus = validationStatus
-		}
+	record := newBucketEvaluationRecord(history, "cognitive", view.CurrentState, view.Outputs, output, sourceRecordID)
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(output.Content), &payload); err != nil {
 		return &record
 	}
-	record.ParseStatus = parseStatus
+	if hasAnyBucketKeys(payload) {
+		record.ParseStatus = "valid_json_wrapped"
+		bucket, status := extractBucket(payload, "cognitive")
+		if status != "" {
+			record.ValidationStatus = status
+			return &record
+		}
+		payload = bucket
+	} else {
+		record.ParseStatus = "valid_json"
+	}
 	record.ValidationStatus = "valid"
-	applyStateValidation(&record, view, payload)
-	applyActionFields(&record, payload)
-	applyTransitionValidation(&record, view, payload)
-	applyCompletionSignal(&record, payload)
-	applyRequiredFieldValidation(&record, view.Outputs.RequiredFields, payload)
-	applyToolAttribution(&record, payload)
-	applyStrictFieldValidation(&record, view.Outputs, payload)
+	validateCognitiveBucket(&record, view, payload)
 	return &record
 }
 
-func parseOutputPayload(content string, mode runtime.FinalizationMode) (map[string]any, string, string, bool) {
+// evaluateFinalizationOutput parses the assistant plaintext once and produces
+// an evaluation record for each bucket required by the finalization mode.
+func evaluateFinalizationOutput(history *logs.SessionHistory, session runtime.SessionView, mode runtime.FinalizationMode, output provider.AssistantOutput, sourceRecordID string) []logs.OutputContractEvaluationRecord {
 	var payload map[string]any
-	if err := json.Unmarshal([]byte(content), &payload); err != nil {
-		return nil, "plain_text", "missing_schema_output", false
-	}
-	if wrapped, status, ok := unwrapBuckets(payload, mode); ok {
-		return wrapped, "valid_json_wrapped", "", true
-	} else if status != "" {
-		return nil, "valid_json_wrapped", status, false
-	}
-	return payload, "valid_json", "", true
-}
+	parseErr := json.Unmarshal([]byte(output.Content), &payload)
 
-func unwrapBuckets(payload map[string]any, mode runtime.FinalizationMode) (map[string]any, string, bool) {
-	if !hasAnyBucketKeys(payload) {
-		if mode.IsFinalizing && (mode.RequireCognitive || mode.RequireWorkflow) {
-			return nil, "missing_required_buckets", false
+	records := make([]logs.OutputContractEvaluationRecord, 0, 2)
+	if mode.RequireCognitive {
+		record := newBucketEvaluationRecord(history, "cognitive", session.Cognitive.CurrentState, session.Cognitive.Outputs, output, sourceRecordID)
+		if bucket, done := resolveFinalizationBucket(&record, payload, parseErr, "cognitive"); !done {
+			record.ValidationStatus = "valid"
+			validateCognitiveBucket(&record, session.Cognitive, bucket)
 		}
-		return nil, "", false
-	}
-	for key := range payload {
-		if key != "cognitive" && key != "workflow" {
-			return nil, "unknown_bucket", false
-		}
+		records = append(records, record)
 	}
 	if mode.RequireWorkflow {
-		workflowRaw, ok := payload["workflow"]
-		if !ok {
-			return nil, "missing_workflow_bucket", false
+		workflow := runtime.WorkflowView{}
+		if session.Workflow != nil {
+			workflow = *session.Workflow
 		}
-		if _, ok := workflowRaw.(map[string]any); !ok {
-			return nil, "invalid_workflow_bucket", false
+		record := newBucketEvaluationRecord(history, "workflow", workflow.CurrentState, workflow.Outputs, output, sourceRecordID)
+		if bucket, done := resolveFinalizationBucket(&record, payload, parseErr, "workflow"); !done {
+			record.ValidationStatus = "valid"
+			validateWorkflowBucket(&record, workflow, bucket)
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+// resolveFinalizationBucket applies parse- and wrapper-level checks for one
+// required bucket. It returns the bucket payload when validation should
+// continue, or done=true when a terminal parse/wrapper status was recorded.
+func resolveFinalizationBucket(record *logs.OutputContractEvaluationRecord, payload map[string]any, parseErr error, bucketName string) (map[string]any, bool) {
+	if parseErr != nil {
+		// Defaults already record plain_text / missing_schema_output.
+		return nil, true
+	}
+	if !hasAnyBucketKeys(payload) {
+		record.ParseStatus = "valid_json"
+		record.ValidationStatus = "missing_required_buckets"
+		return nil, true
+	}
+	record.ParseStatus = "valid_json_wrapped"
+	bucket, status := extractBucket(payload, bucketName)
+	if status != "" {
+		record.ValidationStatus = status
+		return nil, true
+	}
+	return bucket, false
+}
+
+// extractBucket returns the named bucket object from a wrapper payload, or a
+// terminal validation status: unknown_bucket when the wrapper carries keys
+// other than cognitive/workflow, missing_<name>_bucket when the requested
+// bucket is absent, invalid_<name>_bucket when it is not an object.
+func extractBucket(payload map[string]any, bucketName string) (map[string]any, string) {
+	for key := range payload {
+		if key != "cognitive" && key != "workflow" {
+			return nil, "unknown_bucket"
 		}
 	}
-	cognitiveRaw, ok := payload["cognitive"]
+	raw, ok := payload[bucketName]
 	if !ok {
-		if mode.RequireCognitive {
-			return nil, "missing_cognitive_bucket", false
-		}
-		return nil, "missing_cognitive_bucket", false
+		return nil, "missing_" + bucketName + "_bucket"
 	}
-	cognitive, ok := cognitiveRaw.(map[string]any)
+	bucket, ok := raw.(map[string]any)
 	if !ok {
-		return nil, "invalid_cognitive_bucket", false
+		return nil, "invalid_" + bucketName + "_bucket"
 	}
-	return cognitive, "", true
+	return bucket, ""
 }
 
 func hasAnyBucketKeys(payload map[string]any) bool {
 	_, hasCognitive := payload["cognitive"]
 	_, hasWorkflow := payload["workflow"]
 	return hasCognitive || hasWorkflow
+}
+
+func hasOutputContract(contract defs.StateOutputContract) bool {
+	return strings.TrimSpace(contract.SchemaName) != "" || len(contract.RequiredFields) > 0
+}
+
+func newBucketEvaluationRecord(history *logs.SessionHistory, chart, stateName string, contract defs.StateOutputContract, output provider.AssistantOutput, sourceRecordID string) logs.OutputContractEvaluationRecord {
+	return logs.OutputContractEvaluationRecord{
+		SessionBaseRecord: history.NextRecord("output_contract_evaluation"),
+		StateName:         stateName,
+		Chart:             chart,
+		SchemaName:        contract.SchemaName,
+		SourceRecordID:    sourceRecordID,
+		HostVersion:       hostVersion,
+		ParserVersion:     outputParserVersion,
+		ParseStatus:       "plain_text",
+		ValidationStatus:  "missing_schema_output",
+		RequiredFields:    append([]string(nil), contract.RequiredFields...),
+		MissingFields:     append([]string(nil), contract.RequiredFields...),
+		RawContentPreview: truncatePreview(output.Content),
+	}
+}
+
+func validateCognitiveBucket(record *logs.OutputContractEvaluationRecord, view runtime.CognitiveView, payload map[string]any) {
+	applyStateValidation(record, view, payload)
+	applyActionFields(record, payload)
+	applyTransitionValidation(record, view.AllowedTriggers, payload)
+	applyCompletionSignal(record, payload)
+	applyRequiredFieldValidation(record, view.Outputs.RequiredFields, payload)
+	applyToolAttribution(record, payload)
+	applyStrictFieldValidation(record, view.Outputs, payload)
+}
+
+// validateWorkflowBucket validates the workflow bucket against the workflow
+// state's output contract. Transition triggers are recorded but not checked
+// against a trigger list here; the workflow statechart itself arbitrates
+// transitions when the loop applies them.
+func validateWorkflowBucket(record *logs.OutputContractEvaluationRecord, view runtime.WorkflowView, payload map[string]any) {
+	applyStateValidation(record, runtime.CognitiveView{CurrentState: view.CurrentState}, payload)
+	applyActionFields(record, payload)
+	applyTransitionValidation(record, nil, payload)
+	applyCompletionSignal(record, payload)
+	applyRequiredFieldValidation(record, view.Outputs.RequiredFields, payload)
+	applyToolAttribution(record, payload)
+	applyStrictFieldValidation(record, view.Outputs, payload)
 }
 
 func applyStateValidation(record *logs.OutputContractEvaluationRecord, view runtime.CognitiveView, payload map[string]any) {
@@ -122,14 +195,14 @@ func applyActionFields(record *logs.OutputContractEvaluationRecord, payload map[
 	}
 }
 
-func applyTransitionValidation(record *logs.OutputContractEvaluationRecord, view runtime.CognitiveView, payload map[string]any) {
+func applyTransitionValidation(record *logs.OutputContractEvaluationRecord, allowedTriggers []string, payload map[string]any) {
 	if transition, ok := payload["transition"].(string); ok {
 		record.TransitionTrigger = transition
 	}
 	if transition, ok := payload["next_step_signal"].(string); ok && record.TransitionTrigger == "" {
 		record.TransitionTrigger = transition
 	}
-	if record.TransitionTrigger != "" && len(view.AllowedTriggers) > 0 && !contains(view.AllowedTriggers, record.TransitionTrigger) {
+	if record.TransitionTrigger != "" && len(allowedTriggers) > 0 && !contains(allowedTriggers, record.TransitionTrigger) {
 		record.ValidationStatus = "invalid_transition_signal"
 	}
 }

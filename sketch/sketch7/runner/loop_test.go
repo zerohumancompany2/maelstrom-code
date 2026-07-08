@@ -406,10 +406,7 @@ func TestEvaluateAssistantOutputStrictAllowsOptionalFields(t *testing.T) {
 			Strict:         true,
 		},
 	}
-	record := evaluateAssistantOutput(history, runtime.SessionView{Cognitive: view}, runtime.FinalizationMode{}, provider.AssistantOutput{Content: `{"summary":"done","completion_signal":true,"evidence":"file review","risks":"low"}`}, "assistant-1")
-	if record == nil {
-		t.Fatal("expected output evaluation record")
-	}
+	record := evaluateSingleOutput(t, history, runtime.SessionView{Cognitive: view}, runtime.FinalizationMode{}, `{"summary":"done","completion_signal":true,"evidence":"file review","risks":"low"}`)
 	if record.ValidationStatus != "valid" {
 		t.Fatalf("ValidationStatus = %q, want valid", record.ValidationStatus)
 	}
@@ -769,10 +766,7 @@ func TestEvaluateAssistantOutputRejectsDisallowedTransitionSignal(t *testing.T) 
 		AllowedTriggers: []string{"observed"},
 		Outputs:         defs.StateOutputContract{SchemaName: "cognitive_step_v1", RequiredFields: []string{"summary", "evidence", "transition"}},
 	}
-	eval := evaluateAssistantOutput(history, runtime.SessionView{Cognitive: view}, runtime.FinalizationMode{}, provider.AssistantOutput{Content: `{"summary":"done","evidence":"repo context","transition":"complete"}`}, "assistant-1")
-	if eval == nil {
-		t.Fatal("expected output evaluation")
-	}
+	eval := evaluateSingleOutput(t, history, runtime.SessionView{Cognitive: view}, runtime.FinalizationMode{}, `{"summary":"done","evidence":"repo context","transition":"complete"}`)
 	if eval.ValidationStatus != "invalid_transition_signal" {
 		t.Fatalf("ValidationStatus = %q, want invalid_transition_signal", eval.ValidationStatus)
 	}

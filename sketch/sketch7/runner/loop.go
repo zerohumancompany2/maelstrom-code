@@ -109,7 +109,7 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 				if _, ok := record.(logs.ToolCallRequestRecord); ok {
 					hasToolCalls = true
 				}
-				if eval, ok := record.(logs.OutputContractEvaluationRecord); ok {
+				if eval, ok := record.(logs.OutputContractEvaluationRecord); ok && eval.Chart == "cognitive" {
 					copy := eval
 					finalizationEval = &copy
 				}
@@ -371,10 +371,9 @@ func (l Loop) consumeProviderOutput(view runtime.SessionView, finalizationMode r
 	switch v := output.(type) {
 	case provider.AssistantOutput:
 		assistant := logs.AssistantMessageRecord{SessionBaseRecord: history.NextRecord("assistant"), Content: v.Content, Reasoning: v.Reasoning}
-		record := evaluateAssistantOutput(history, view, finalizationMode, v, assistant.RecordID())
 		records := []logs.SessionRecord{assistant}
-		if record != nil {
-			records = append(records, *record)
+		for _, evaluation := range evaluateAssistantOutput(history, view, finalizationMode, v, assistant.RecordID()) {
+			records = append(records, evaluation)
 		}
 		return records, nil, nil
 	case provider.ToolRequestOutput:
