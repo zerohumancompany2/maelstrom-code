@@ -199,22 +199,28 @@ single-binding workflows dominate the near-term use cases.
 
 ### 13. Orchestration stays above the core
 
-The core is multi-agent in *definition*, single-session in *execution*, and
+The core is multi-agent in *definition*, multi-session in *execution*, and
 orchestration-free in *decision*:
 
-- **In the core**: the catalog ingesting N agent/model/workflow YAMLs as
-  available data; the *mechanics* of binding (binding records, bound-session
-  views, workflow tool-policy intersection, workflow history mirroring,
-  finalization). The core can execute any of its agents in a session,
-  optionally bound to a workflow instance. It is purely reactive: it executes
-  what it is handed and never initiates work on its own.
-- **Orchestration (on top of the core, or adjacent via an API)**: the
-  *decision* to bind — which agent, which workflow instance, when, in what
-  sequence — plus inter-agent glue, triggers, schedules, and queues.
+- **Definition (core)**: the catalog ingesting N agent/model/workflow YAMLs
+  as available data.
+- **Execution (core)**: the lifecycle *verbs* for the primitive objects —
+  start, stop, interrupt, resume, bind, unbind, run-to-completion — for any
+  number of concurrent sessions, each durable and independently addressable
+  (session IDs, stores, histories). The core houses and enables the running
+  of the primitives, and must expose enough programmatic surface that
+  orchestration can drive those verbs later. It also owns the *mechanics* of
+  binding: binding records, bound-session views, workflow tool-policy
+  intersection, workflow history mirroring, finalization.
+- **Decision (orchestration, on top of the core or adjacent via an API)**:
+  the *sentences* — when to start, which agent, against which workflow
+  instance, in what order, why — plus inter-agent glue, triggers, schedules,
+  and queues.
 
-Litmus test: if a feature requires the runtime to *initiate* work or to
-*route* information between sessions, it belongs in orchestration. Holding N
-agents as data is core; choosing among them is not.
+Litmus test: the core supplies verbs without volition. Every lifecycle verb
+is invoked from outside (or via a policy-gated tool); the core never
+supplies the *when/which/why*. And the core never routes information between
+sessions — cross-session visibility is durable workflow state only.
 
 Corollaries:
 
@@ -227,6 +233,14 @@ Corollaries:
   whether an agent may self-bind via tool policy (enable/disable per
   agent/state). If self-binding proves problematic, restrict it with policy
   rather than adding core logic.
+- Multi-session as *capability* (no shared mutable state, safe concurrency,
+  addressable sessions) is core hygiene. A session *manager* that tracks
+  fleets of live sessions starts drifting toward decisions; defer it until
+  orchestration design forces the question of where it lives.
+- Today the session lifecycle is implicitly driven by `main.go` glue. The
+  Phase 5 promotion should shape the core's public API around exactly these
+  lifecycle verbs — that is where "enough surface for orchestration" becomes
+  real, without building the orchestrator itself.
 - The first orchestrator should be embarrassingly small: the eval harness
   sequencing sessions against one persisted workflow instance is already a
   primitive orchestrator. A real orchestration layer gets designed only
