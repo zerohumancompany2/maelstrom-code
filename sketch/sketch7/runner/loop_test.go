@@ -281,7 +281,7 @@ func TestLoopRunNarrowsProviderToolsToEnabledStateTools(t *testing.T) {
 func TestLoopRunDisablesProviderToolsWhenStateHasVisibleButNoEnabledTools(t *testing.T) {
 	raw, _ := json.Marshal(map[string]string{"path": "sample.txt"})
 	providerScript := &scriptedProvider{responses: repeatedToolResponses("call-disabled-empty", "read_file", map[string]string{"path": "sample.txt"}, raw, 8)}
-	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.ReadFileTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.ReadFileTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10, MaxIterations: 8}
 	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file"}}
 	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "decide", States: []defs.StateDefinition{{Name: "decide", VisibleTools: []string{"read_file"}, EnabledTools: []string{}}}}}
 	sessionHistory := logs.NewSessionHistory("session-empty-enabled-tools")
@@ -913,7 +913,7 @@ func TestLoopRunRecordsToolValidationFailure(t *testing.T) {
 func TestLoopRunRejectsCognitivelyDisabledToolWithoutExecution(t *testing.T) {
 	raw, _ := json.Marshal(map[string]string{"command": "echo should-not-run"})
 	providerScript := &scriptedProvider{responses: repeatedToolResponses("call-disabled-cognitive", "run_command", map[string]string{"command": "echo should-not-run"}, raw, 8)}
-	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.RunCommandTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.RunCommandTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10, MaxIterations: 8}
 	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file", "run_command"}}
 	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{Name: "observe", EnabledTools: []string{"read_file"}}}}}
 	sessionHistory := logs.NewSessionHistory("session-disabled-cognitive")
@@ -945,7 +945,7 @@ func TestLoopRunRejectsCognitivelyDisabledToolWithoutExecution(t *testing.T) {
 func TestLoopRunRejectsWorkflowDisabledToolWithoutExecution(t *testing.T) {
 	raw, _ := json.Marshal(map[string]string{"command": "echo should-not-run"})
 	providerScript := &scriptedProvider{responses: repeatedToolResponses("call-disabled-workflow", "run_command", map[string]string{"command": "echo should-not-run"}, raw, 8)}
-	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.RunCommandTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.RunCommandTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10, MaxIterations: 8}
 	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file", "run_command"}}
 	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{Name: "observe", EnabledTools: []string{"read_file", "run_command"}}}}}
 	workflowDef := defs.WorkflowDefinition{Statechart: defs.StatechartDefinition{InitialState: "planning", States: []defs.StateDefinition{{Name: "planning", EnabledTools: []string{"read_file"}}}}}

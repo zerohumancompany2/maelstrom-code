@@ -25,6 +25,19 @@ type Loop struct {
 	// check is cooperative (once per iteration), so overshoot is bounded by
 	// one provider call plus tool execution. Zero means no deadline.
 	Deadline time.Time
+	// MaxIterations is a backstop against runaway loops. State bounds and
+	// the deadline are the real governors; this only catches sessions that
+	// evade both. Zero means the default of 32.
+	MaxIterations int
+}
+
+const defaultMaxIterations = 32
+
+func (l Loop) maxIterations() int {
+	if l.MaxIterations > 0 {
+		return l.MaxIterations
+	}
+	return defaultMaxIterations
 }
 
 const hostVersion = "sketch7-dev"
@@ -161,7 +174,7 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: true, StopReason: "assistant_only", Iteration: iteration})
 			return nil
 		}
-		if iteration == 8 {
+		if iteration >= l.maxIterations() {
 			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: "loop_guard", Iteration: iteration})
 			return fmt.Errorf("loop guard tripped")
 		}
