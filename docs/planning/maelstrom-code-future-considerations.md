@@ -183,6 +183,20 @@ OpenAI-compatible provider forwards as OpenRouter's `provider` routing field.
 Defer until the variance is shown to change decisions, not just widen error
 bars; higher deck `repeats` is the cheaper first answer.
 
+### 12. Cross-session workflow budget accounting
+
+Workflow-state bounds (max inference turns / tool calls) are currently
+counted from *session* history since the workflow state-enter record, so a
+workflow's budget is effectively per binding session. A workflow instance
+that spans multiple sessions or agents (agent A spends 10 tool calls, agent
+B binds later) restarts its budget with each binding rather than consuming a
+shared allowance. True cross-session accounting would need to derive counts
+from the mirrored workflow history instead of the session log. Phase 3
+mirrors enough lifecycle records (workflow state exits and finalization
+outcomes) that this can be added later as a reducer change without new
+record kinds. Defer until multi-session workflows are actually exercised;
+single-binding workflows dominate the near-term use cases.
+
 ## Anti-goals
 
 These are not absolute forever bans, but they should be resisted unless there is strong evidence.
