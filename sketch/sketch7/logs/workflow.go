@@ -36,6 +36,17 @@ type WorkflowNoteRecord struct {
 	Content     string
 }
 
+// WorkflowStateExitRecord mirrors a workflow state exit into the workflow's
+// own durable history so workflow lifecycle (including finalization outcomes)
+// is reconstructable across sessions and agents without any one session log.
+type WorkflowStateExitRecord struct {
+	WorkflowBaseRecord
+	StateName      string
+	Reason         string
+	ByAgent        string
+	DerivedFromIDs []string
+}
+
 type WorkflowHistory struct {
 	WorkflowID string
 	Records    []WorkflowRecord

@@ -189,6 +189,8 @@ func newWorkflowRecordByKind(kind string) (WorkflowRecord, error) {
 		return &WorkflowBindingRefRecord{}, nil
 	case "workflow_note":
 		return &WorkflowNoteRecord{}, nil
+	case "workflow_state_exit":
+		return &WorkflowStateExitRecord{}, nil
 	default:
 		return nil, fmt.Errorf("unknown workflow record kind %q", kind)
 	}

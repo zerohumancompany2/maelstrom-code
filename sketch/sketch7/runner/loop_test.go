@@ -541,7 +541,7 @@ func TestLoopRunFailsAfterFinalizationRetriesExhausted(t *testing.T) {
 	seedCognitiveBoundHit(sessionHistory)
 
 	err := loop.Run(agent, agentDef, nil, sessionHistory, nil)
-	if err == nil || !strings.Contains(err.Error(), "cognitive finalization failed validation") {
+	if err == nil || !strings.Contains(err.Error(), "finalization failed validation") {
 		t.Fatalf("error = %v, want finalization validation failure", err)
 	}
 	foundExit := false
@@ -573,7 +573,7 @@ func TestLoopRunFinalizationDoesNotExecuteReturnedToolRequest(t *testing.T) {
 	seedCognitiveBoundHit(sessionHistory)
 
 	err := loop.Run(agent, agentDef, nil, sessionHistory, nil)
-	if err == nil || !strings.Contains(err.Error(), "cognitive finalization failed validation") {
+	if err == nil || !strings.Contains(err.Error(), "finalization failed validation") {
 		t.Fatalf("error = %v, want finalization validation failure", err)
 	}
 	foundRequest := false
@@ -1411,5 +1411,162 @@ func TestLoopRunFinalizesWhenToolBudgetExhaustedWithOutputContract(t *testing.T)
 	}
 	if !foundCompletion {
 		t.Fatalf("expected state_finalized completion, got %#v", sessionHistory.Records)
+	}
+}
+
+func boundedWorkflowFinalizationDef(maxInferenceTurns, maxFinalizationRetries int) defs.WorkflowDefinition {
+	return defs.WorkflowDefinition{
+		Name:        "ticket_triage",
+		Description: "Triage the ticket.",
+		Statechart: defs.StatechartDefinition{InitialState: "triaging", States: []defs.StateDefinition{{
+			Name:    "triaging",
+			Outputs: defs.StateOutputContract{SchemaName: "triage_v1", RequiredFields: []string{"decision"}},
+			Bounds:  defs.StateBoundsContract{MaxInferenceTurns: maxInferenceTurns, MaxFinalizationRetries: maxFinalizationRetries},
+		}}},
+	}
+}
+
+func seedWorkflowBoundHit(history *logs.SessionHistory, workflowID string) {
+	history.Append(logs.SessionWorkflowBindingRecord{SessionBaseRecord: history.NextRecord("workflow_binding_ref"), BindingID: "bind-" + workflowID, WorkflowID: workflowID, Action: "bind"})
+	history.Append(logs.StateEnterRecord{SessionBaseRecord: history.NextRecord("state_enter"), Chart: "workflow", StateName: "triaging"})
+	history.Append(logs.InferenceEnvelopeRecord{SessionBaseRecord: history.NextRecord("inference_envelope"), PayloadID: "seed-workflow", ModelRef: "fake-model", ProviderRef: "fake"})
+}
+
+func TestLoopRunFinalizesWorkflowOnlyWhenWorkflowBoundHit(t *testing.T) {
+	providerScript := &scriptedProvider{responses: []provider.Response{{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"workflow":{"decision":"escalate"}}`}}}}}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.ReadFileTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file"}}
+	agentDef := defs.AgentDefinition{Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}}, Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{Name: "observe", Prompt: "Observe."}}}}
+	workflowDef := boundedWorkflowFinalizationDef(1, 0)
+	sessionHistory := logs.NewSessionHistory("session-workflow-finalize")
+	workflowHistory := logs.NewWorkflowHistory("workflow-finalize")
+	seedWorkflowBoundHit(sessionHistory, workflowHistory.WorkflowID)
+
+	if err := loop.Run(agent, agentDef, &workflowDef, sessionHistory, workflowHistory); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+	if len(providerScript.requests) != 1 {
+		t.Fatalf("got %d provider requests, want 1", len(providerScript.requests))
+	}
+	if len(providerScript.requests[0].Tools) != 0 {
+		t.Fatalf("workflow finalization exposed tools: %+v", providerScript.requests[0].Tools)
+	}
+	format := providerScript.requests[0].ResponseFormat
+	if format == nil || len(format.Buckets) != 1 || format.Buckets[0].Name != "workflow" {
+		t.Fatalf("ResponseFormat = %+v, want one workflow bucket", format)
+	}
+	foundWorkflowEval := false
+	foundSessionExit := false
+	foundWorkflowExit := false
+	foundCompletion := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.OutputContractEvaluationRecord:
+			if v.Chart == "workflow" && v.ValidationStatus == "valid" && v.SchemaName == "triage_v1" {
+				foundWorkflowEval = true
+			}
+		case logs.StateExitRecord:
+			if v.Chart == "workflow" && v.StateName == "triaging" && v.Reason == "finalized" && v.CompletionAccepted {
+				foundSessionExit = true
+			}
+		case logs.CompletionRecord:
+			if v.Completed && v.StopReason == "workflow_state_finalized" {
+				foundCompletion = true
+			}
+		}
+	}
+	for _, record := range workflowHistory.Records {
+		if v, ok := record.(logs.WorkflowStateExitRecord); ok && v.StateName == "triaging" && v.Reason == "finalized" && v.ByAgent == "builder" {
+			foundWorkflowExit = true
+		}
+	}
+	if !foundWorkflowEval || !foundSessionExit || !foundWorkflowExit || !foundCompletion {
+		t.Fatalf("expected workflow eval/session exit/workflow exit/completion, session=%#v workflow=%#v", sessionHistory.Records, workflowHistory.Records)
+	}
+}
+
+func TestLoopRunFinalizesCombinedCognitiveAndWorkflowBuckets(t *testing.T) {
+	providerScript := &scriptedProvider{responses: []provider.Response{{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"cognitive":{"summary":"done"},"workflow":{"decision":"ship"}}`}}}}}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.ReadFileTool{RootDir: t.TempDir()}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file"}}
+	agentDef := boundedFinalizationAgentDef(1, 0)
+	workflowDef := boundedWorkflowFinalizationDef(1, 0)
+	sessionHistory := logs.NewSessionHistory("session-combined-finalize")
+	workflowHistory := logs.NewWorkflowHistory("workflow-combined")
+	seedWorkflowBoundHit(sessionHistory, workflowHistory.WorkflowID)
+	seedCognitiveBoundHit(sessionHistory)
+
+	if err := loop.Run(agent, agentDef, &workflowDef, sessionHistory, workflowHistory); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+	format := providerScript.requests[0].ResponseFormat
+	if format == nil || len(format.Buckets) != 2 || format.Buckets[0].Name != "cognitive" || format.Buckets[1].Name != "workflow" {
+		t.Fatalf("ResponseFormat = %+v, want cognitive and workflow buckets", format)
+	}
+	validByChart := map[string]bool{}
+	exitByChart := map[string]bool{}
+	foundCompletion := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.OutputContractEvaluationRecord:
+			if v.ValidationStatus == "valid" {
+				validByChart[v.Chart] = true
+			}
+		case logs.StateExitRecord:
+			if v.Reason == "completed" || v.Reason == "finalized" {
+				exitByChart[v.Chart] = true
+			}
+		case logs.CompletionRecord:
+			if v.Completed && v.StopReason == "combined_state_finalized" {
+				foundCompletion = true
+			}
+		}
+	}
+	if !validByChart["cognitive"] || !validByChart["workflow"] || !exitByChart["cognitive"] || !exitByChart["workflow"] || !foundCompletion {
+		t.Fatalf("expected valid evals/exits for both charts and combined completion, got %#v", sessionHistory.Records)
+	}
+}
+
+func TestLoopRunCombinedFinalizationRetriesBothBucketsAfterPartialFailure(t *testing.T) {
+	providerScript := &scriptedProvider{responses: []provider.Response{
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"cognitive":{"summary":"done"}}`}}},
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"cognitive":{"summary":"done"},"workflow":{"decision":"ship"}}`}}},
+	}}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := boundedFinalizationAgentDef(1, 1)
+	workflowDef := boundedWorkflowFinalizationDef(1, 1)
+	sessionHistory := logs.NewSessionHistory("session-combined-retry")
+	workflowHistory := logs.NewWorkflowHistory("workflow-combined-retry")
+	seedWorkflowBoundHit(sessionHistory, workflowHistory.WorkflowID)
+	seedCognitiveBoundHit(sessionHistory)
+
+	if err := loop.Run(agent, agentDef, &workflowDef, sessionHistory, workflowHistory); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+	if len(providerScript.requests) != 2 {
+		t.Fatalf("got %d provider requests, want 2", len(providerScript.requests))
+	}
+	for i, request := range providerScript.requests {
+		if request.ResponseFormat == nil || len(request.ResponseFormat.Buckets) != 2 {
+			t.Fatalf("request %d ResponseFormat = %+v, want both buckets re-requested", i, request.ResponseFormat)
+		}
+	}
+	foundMissingWorkflow := false
+	foundRetry := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.OutputContractEvaluationRecord:
+			if v.Chart == "workflow" && v.ValidationStatus == "missing_workflow_bucket" {
+				foundMissingWorkflow = true
+			}
+		case logs.RetryRecord:
+			if v.Reason == "invalid_finalization_output" && len(v.DerivedFrom) == 1 {
+				foundRetry = true
+			}
+		}
+	}
+	if !foundMissingWorkflow || !foundRetry {
+		t.Fatalf("expected missing workflow attribution and retry, got %#v", sessionHistory.Records)
 	}
 }

@@ -50,20 +50,20 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 		view := BuildSessionView(agent, agentDef, workflowDef, sessionHistory, workflowHistory)
 		ensureStateEnterRecords(sessionHistory, view)
 		finalizationMode := runtime.ResolveFinalizationMode(view.Cognitive, view.Workflow, sessionHistory)
-		if hit, reason := boundStopReason(view.Cognitive, sessionHistory); hit {
-			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: reason})
+		if hit, chart, reason := boundStopReason(view, sessionHistory); hit {
+			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: chart, StateName: boundStateName(view, chart), Reason: reason})
 			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: reason, Iteration: iteration})
-			return fmt.Errorf("cognitive state bound exceeded: %s", reason)
+			return fmt.Errorf("%s state bound exceeded: %s", chart, reason)
 		}
 		if !l.Deadline.IsZero() && time.Now().After(l.Deadline) {
 			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: "deadline_exceeded"})
 			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: "deadline_exceeded", Iteration: iteration})
 			return fmt.Errorf("run deadline exceeded")
 		}
-		finalizingCognitive := finalizationMode.IsFinalizing && finalizationMode.RequireCognitive
+		finalizing := finalizationMode.IsFinalizing
 		payloadID := sessionHistory.NextBundleID()
 		inferencePayload := contextBuilder.Build(payloadID, ctxpkg.BuildSections(agentDef, view, sessionHistory, ctxpkg.RepoContextOptions{RootDir: ".", RefreshEveryTurns: 12, MaxFilesToInspect: 2000, MaxTopLevelEntries: 8, MaxExtensionsToShow: 5}), view, sessionHistory, workflowHistory)
-		if finalizingCognitive {
+		if finalizing {
 			inferencePayload.Tools = nil
 		}
 		inferencePayload = persistContextSnapshots(sessionHistory, inferencePayload)
@@ -75,18 +75,20 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 		payload := prompt.BuildPayload(agent, inferencePayload.PayloadID, sessionHistory.SessionID, assembled)
 		effectivePolicy := effectiveToolPolicy(view)
 		toolsForRequest := toolDefinitions(l.Tools, effectivePolicy.Tools)
-		if finalizingCognitive {
+		if finalizing {
 			toolsForRequest = nil
 		}
 		request, err := l.Provider.BuildRequest(agent, payload, toolsForRequest)
 		if err != nil {
 			return err
 		}
-		request.ResponseFormat = responseFormatForState(view.Cognitive)
-		if finalizingCognitive && request.ResponseFormat != nil {
-			// Finalization validation requires the wrapped {"cognitive": {...}}
-			// shape, so the enforced schema must request the same shape.
-			request.ResponseFormat.WrapBucket = "cognitive"
+		if finalizing {
+			// Finalization validation requires the wrapped bucket shape, so
+			// the enforced schema must request the same shape for every
+			// required bucket.
+			request.ResponseFormat = finalizationResponseFormat(finalizationMode, view)
+		} else {
+			request.ResponseFormat = responseFormatForState(view.Cognitive)
 		}
 		startedAt := time.Now().UnixMilli()
 		sessionHistory.Append(logs.InferenceEnvelopeRecord{SessionBaseRecord: sessionHistory.NextRecord("inference_envelope"), PayloadID: inferencePayload.PayloadID, ModelRef: inferencePayload.ModelRef, ProviderRef: agent.ProviderName, StartedAtUnixMilli: startedAt, IncludedContextRecordIDs: contextRecordIDs(inferencePayload.Sections), IncludedTranscriptKinds: messageKinds(inferencePayload.Messages), IncludedToolNames: toolNamesForDefinitions(toolsForRequest)})
@@ -97,9 +99,9 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 		}
 
 		hasToolCalls := false
-		var finalizationEval *logs.OutputContractEvaluationRecord
+		var cognitiveEval, workflowEval *logs.OutputContractEvaluationRecord
 		for _, output := range response.Outputs {
-			records, workflowRecords, err := l.consumeProviderOutput(view, finalizationMode, sessionHistory, workflowHistory, output, finalizingCognitive)
+			records, workflowRecords, err := l.consumeProviderOutput(view, finalizationMode, sessionHistory, workflowHistory, output, finalizing)
 			if err != nil {
 				sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: "tool_execution_error", Iteration: iteration})
 				return err
@@ -109,9 +111,13 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 				if _, ok := record.(logs.ToolCallRequestRecord); ok {
 					hasToolCalls = true
 				}
-				if eval, ok := record.(logs.OutputContractEvaluationRecord); ok && eval.Chart == "cognitive" {
+				if eval, ok := record.(logs.OutputContractEvaluationRecord); ok {
 					copy := eval
-					finalizationEval = &copy
+					if eval.Chart == "workflow" {
+						workflowEval = &copy
+					} else {
+						cognitiveEval = &copy
+					}
 				}
 			}
 			for _, record := range workflowRecords {
@@ -119,54 +125,79 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 			}
 		}
 
-		if finalizingCognitive {
-			if finalizationEval != nil && finalizationEval.ValidationStatus == "valid" {
-				if transitioned := appendRuntimeCognitiveTransition(sessionHistory, agentDef.Cognitive, view.Cognitive, finalizationEval); transitioned {
+		if finalizing {
+			cognitiveOK := !finalizationMode.RequireCognitive || evalValid(cognitiveEval)
+			workflowOK := !finalizationMode.RequireWorkflow || evalValid(workflowEval)
+			if cognitiveOK && workflowOK {
+				workflowTransitioned := false
+				if finalizationMode.RequireWorkflow {
+					workflowTransitioned = appendWorkflowFinalization(sessionHistory, workflowHistory, workflowDef, view, workflowEval)
+				}
+				if finalizationMode.RequireCognitive {
+					if transitioned := appendRuntimeCognitiveTransition(sessionHistory, agentDef.Cognitive, view.Cognitive, cognitiveEval); transitioned {
+						// The cognitive chart moved on; the session continues in
+						// the next state. Any workflow finalization above is
+						// already durably recorded.
+						continue
+					}
+					sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: "completed", ParseRecordIDs: []string{cognitiveEval.RecordID()}, CompletionAccepted: true})
+				} else if workflowTransitioned {
+					// Workflow-only finalization advanced the workflow chart;
+					// the session continues in the new workflow state with a
+					// fresh budget.
 					continue
 				}
-				sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: "completed", ParseRecordIDs: []string{finalizationEval.RecordID()}, CompletionAccepted: true})
-				sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: true, StopReason: "state_finalized", Iteration: iteration})
+				sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: true, StopReason: finalizationStopReason(finalizationMode), Iteration: iteration})
 				return nil
 			}
-			if logs.CountFinalizationRetriesSinceStateEnter(sessionHistory, "cognitive") < runtime.GetMaxFinalizationRetries(view.Cognitive.Bounds) {
+			retryChart := "cognitive"
+			if !finalizationMode.RequireCognitive {
+				retryChart = "workflow"
+			}
+			retryBudget := runtime.MaxFinalizationRetriesForMode(finalizationMode, view.Cognitive, view.Workflow)
+			if logs.CountFinalizationRetriesSinceStateEnter(sessionHistory, retryChart) < retryBudget {
 				derived := []string{}
-				if finalizationEval != nil {
-					derived = append(derived, finalizationEval.RecordID())
+				if finalizationMode.RequireCognitive && !evalValid(cognitiveEval) && cognitiveEval != nil {
+					derived = append(derived, cognitiveEval.RecordID())
 				}
-				sessionHistory.Append(logs.RetryRecord{SessionBaseRecord: sessionHistory.NextRecord("retry"), Reason: "invalid_finalization_output", Attempt: logs.CountFinalizationRetriesSinceStateEnter(sessionHistory, "cognitive") + 1, Recovered: false, DerivedFrom: derived})
+				if finalizationMode.RequireWorkflow && !evalValid(workflowEval) && workflowEval != nil {
+					derived = append(derived, workflowEval.RecordID())
+				}
+				sessionHistory.Append(logs.RetryRecord{SessionBaseRecord: sessionHistory.NextRecord("retry"), Reason: "invalid_finalization_output", Attempt: logs.CountFinalizationRetriesSinceStateEnter(sessionHistory, retryChart) + 1, Recovered: false, DerivedFrom: derived})
 				continue
 			}
-			parseIDs := []string{}
-			if finalizationEval != nil {
-				parseIDs = append(parseIDs, finalizationEval.RecordID())
+			if finalizationMode.RequireCognitive && !evalValid(cognitiveEval) {
+				sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: "validation_failed", ParseRecordIDs: evalRecordIDs(cognitiveEval)})
 			}
-			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: "validation_failed", ParseRecordIDs: parseIDs})
+			if finalizationMode.RequireWorkflow && !evalValid(workflowEval) {
+				sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "workflow", StateName: boundStateName(view, "workflow"), Reason: "validation_failed", ParseRecordIDs: evalRecordIDs(workflowEval)})
+			}
 			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: "finalization_validation_failed", Iteration: iteration})
-			return fmt.Errorf("cognitive finalization failed validation")
+			return fmt.Errorf("finalization failed validation")
 		}
 
 		if l.shouldStop(sessionHistory) {
 			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: true, StopReason: "stop_token", Iteration: iteration})
 			return nil
 		}
-		if transitioned := appendRuntimeCognitiveTransition(sessionHistory, agentDef.Cognitive, view.Cognitive, finalizationEval); transitioned {
+		if transitioned := appendRuntimeCognitiveTransition(sessionHistory, agentDef.Cognitive, view.Cognitive, cognitiveEval); transitioned {
 			continue
 		}
-		if hit, reason := boundStopReason(view.Cognitive, sessionHistory); hit {
-			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: reason})
+		if hit, chart, reason := boundStopReason(view, sessionHistory); hit {
+			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: chart, StateName: boundStateName(view, chart), Reason: reason})
 			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: reason, Iteration: iteration})
-			return fmt.Errorf("cognitive state bound exceeded: %s", reason)
+			return fmt.Errorf("%s state bound exceeded: %s", chart, reason)
 		}
-		if finalizationEval != nil && finalizationEval.ValidationStatus == "valid" && finalizationEval.CompletionSignal {
-			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: "completed", ParseRecordIDs: []string{finalizationEval.RecordID()}, CompletionAccepted: true})
+		if cognitiveEval != nil && cognitiveEval.ValidationStatus == "valid" && cognitiveEval.CompletionSignal {
+			sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: "completed", ParseRecordIDs: []string{cognitiveEval.RecordID()}, CompletionAccepted: true})
 			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: true, StopReason: "state_completed", Iteration: iteration})
 			return nil
 		}
-		if shouldRetryInvalidStateOutput(view.Cognitive, sessionHistory, finalizationEval) {
-			sessionHistory.Append(logs.RetryRecord{SessionBaseRecord: sessionHistory.NextRecord("retry"), Reason: "invalid_state_output", Attempt: logs.CountInferenceTurnsSinceStateEnter(sessionHistory, "cognitive"), Recovered: false, DerivedFrom: []string{finalizationEval.RecordID()}})
+		if shouldRetryInvalidStateOutput(view.Cognitive, sessionHistory, cognitiveEval) {
+			sessionHistory.Append(logs.RetryRecord{SessionBaseRecord: sessionHistory.NextRecord("retry"), Reason: "invalid_state_output", Attempt: logs.CountInferenceTurnsSinceStateEnter(sessionHistory, "cognitive"), Recovered: false, DerivedFrom: []string{cognitiveEval.RecordID()}})
 			continue
 		}
-		if shouldRetryMissingStateOutput(view.Cognitive, finalizationEval, hasToolCalls) {
+		if shouldRetryMissingStateOutput(view.Cognitive, cognitiveEval, hasToolCalls) {
 			sessionHistory.Append(logs.RetryRecord{SessionBaseRecord: sessionHistory.NextRecord("retry"), Reason: "missing_state_output", Attempt: logs.CountInferenceTurnsSinceStateEnter(sessionHistory, "cognitive"), Recovered: false})
 			continue
 		}
@@ -466,24 +497,160 @@ func toolNamesForDefinitions(defs []provider.ToolDefinition) []string {
 	return names
 }
 
-func boundStopReason(view runtime.CognitiveView, history *logs.SessionHistory) (bool, string) {
+// boundStopReason reports a hard-stop bound violation for either chart.
+// Charts whose bound exhaustion can be absorbed by finalization (an output
+// contract is declared) are skipped here; finalization handles them instead.
+func boundStopReason(view runtime.SessionView, history *logs.SessionHistory) (bool, string, string) {
 	if history == nil {
-		return false, ""
+		return false, "", ""
 	}
-	if view.Bounds.MaxToolCalls > 0 && logs.CountToolCallsSinceStateEnter(history, "cognitive") >= view.Bounds.MaxToolCalls {
-		if !runtime.ShouldFinalizeCognitive(view, history) {
-			return true, "max_tool_calls"
+	cognitive := view.Cognitive
+	if cognitive.Bounds.MaxToolCalls > 0 && logs.CountToolCallsSinceStateEnter(history, "cognitive") >= cognitive.Bounds.MaxToolCalls {
+		if !runtime.ShouldFinalizeCognitive(cognitive, history) {
+			return true, "cognitive", "max_tool_calls"
 		}
 	}
-	if view.Bounds.MaxWallTimeSeconds > 0 {
+	if cognitive.Bounds.MaxWallTimeSeconds > 0 {
 		start := latestStateStartMillis(history, "cognitive")
-		if start > 0 && time.Now().UnixMilli()-start >= int64(view.Bounds.MaxWallTimeSeconds)*1000 {
-			if !runtime.ShouldFinalizeCognitive(view, history) {
-				return true, "max_wall_time"
+		if start > 0 && time.Now().UnixMilli()-start >= int64(cognitive.Bounds.MaxWallTimeSeconds)*1000 {
+			if !runtime.ShouldFinalizeCognitive(cognitive, history) {
+				return true, "cognitive", "max_wall_time"
 			}
 		}
 	}
-	return false, ""
+	if view.Workflow == nil {
+		return false, "", ""
+	}
+	workflow := *view.Workflow
+	if workflow.Bounds.MaxToolCalls > 0 && logs.CountToolCallsSinceStateEnter(history, "workflow") >= workflow.Bounds.MaxToolCalls {
+		if !runtime.ShouldFinalizeWorkflow(workflow, history) {
+			return true, "workflow", "workflow_max_tool_calls"
+		}
+	}
+	if workflow.Bounds.MaxWallTimeSeconds > 0 {
+		start := latestStateStartMillis(history, "workflow")
+		if start > 0 && time.Now().UnixMilli()-start >= int64(workflow.Bounds.MaxWallTimeSeconds)*1000 {
+			if !runtime.ShouldFinalizeWorkflow(workflow, history) {
+				return true, "workflow", "workflow_max_wall_time"
+			}
+		}
+	}
+	return false, "", ""
+}
+
+func boundStateName(view runtime.SessionView, chart string) string {
+	if chart == "workflow" && view.Workflow != nil {
+		return view.Workflow.CurrentState
+	}
+	return view.Cognitive.CurrentState
+}
+
+func evalValid(eval *logs.OutputContractEvaluationRecord) bool {
+	return eval != nil && eval.ValidationStatus == "valid"
+}
+
+func evalRecordIDs(eval *logs.OutputContractEvaluationRecord) []string {
+	if eval == nil {
+		return []string{}
+	}
+	return []string{eval.RecordID()}
+}
+
+func finalizationStopReason(mode runtime.FinalizationMode) string {
+	switch {
+	case mode.RequireCognitive && mode.RequireWorkflow:
+		return "combined_state_finalized"
+	case mode.RequireWorkflow:
+		return "workflow_state_finalized"
+	default:
+		return "state_finalized"
+	}
+}
+
+// finalizationResponseFormat builds the wrapper schema covering every bucket
+// required by the finalization mode.
+func finalizationResponseFormat(mode runtime.FinalizationMode, view runtime.SessionView) *provider.StructuredOutputFormat {
+	buckets := make([]provider.BucketFormat, 0, 2)
+	names := make([]string, 0, 2)
+	strict := false
+	if mode.RequireCognitive {
+		outputs := view.Cognitive.Outputs
+		fieldEnums := map[string][]string{}
+		if len(view.Cognitive.AllowedTriggers) > 0 {
+			fieldEnums["transition"] = append([]string(nil), view.Cognitive.AllowedTriggers...)
+			fieldEnums["next_step_signal"] = append([]string(nil), view.Cognitive.AllowedTriggers...)
+		}
+		buckets = append(buckets, provider.BucketFormat{
+			Name:           "cognitive",
+			RequiredFields: append([]string(nil), outputs.RequiredFields...),
+			OptionalFields: append([]string(nil), outputs.OptionalFields...),
+			FieldTypes:     map[string]string{"completion_signal": "boolean"},
+			FieldEnums:     fieldEnums,
+			Strict:         outputs.Strict,
+		})
+		if name := strings.TrimSpace(outputs.SchemaName); name != "" {
+			names = append(names, name)
+		}
+		strict = strict || outputs.Strict
+	}
+	if mode.RequireWorkflow && view.Workflow != nil {
+		outputs := view.Workflow.Outputs
+		buckets = append(buckets, provider.BucketFormat{
+			Name:           "workflow",
+			RequiredFields: append([]string(nil), outputs.RequiredFields...),
+			OptionalFields: append([]string(nil), outputs.OptionalFields...),
+			FieldTypes:     map[string]string{"completion_signal": "boolean"},
+			Strict:         outputs.Strict,
+		})
+		if name := strings.TrimSpace(outputs.SchemaName); name != "" {
+			names = append(names, name)
+		}
+		strict = strict || outputs.Strict
+	}
+	if len(buckets) == 0 {
+		return nil
+	}
+	name := strings.Join(names, "__")
+	if name == "" {
+		name = "finalization"
+	}
+	return &provider.StructuredOutputFormat{Name: name, Strict: strict, Buckets: buckets}
+}
+
+// appendWorkflowFinalization records a validated workflow finalization: a
+// session-side workflow state exit plus mirrored workflow-history records so
+// the workflow lifecycle is reconstructable without the session log. A valid
+// transition trigger advances the workflow chart; otherwise the state exit is
+// recorded as finalized in place.
+func appendWorkflowFinalization(sessionHistory *logs.SessionHistory, workflowHistory *logs.WorkflowHistory, workflowDef *defs.WorkflowDefinition, view runtime.SessionView, eval *logs.OutputContractEvaluationRecord) bool {
+	if view.Workflow == nil || eval == nil {
+		return false
+	}
+	current := view.Workflow.CurrentState
+	trigger := strings.TrimSpace(eval.TransitionTrigger)
+	next := ""
+	if trigger != "" && workflowDef != nil {
+		machine := statecharts.Compile("workflow", workflowDef.Statechart)
+		if candidate, err := machine.Next(current, trigger); err == nil {
+			next = candidate
+		}
+	}
+	reason := "finalized"
+	if next != "" {
+		reason = "transition"
+	}
+	sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "workflow", StateName: current, Reason: reason, ParseRecordIDs: []string{eval.RecordID()}, CompletionAccepted: true})
+	if workflowHistory != nil {
+		workflowHistory.Append(logs.WorkflowStateExitRecord{WorkflowBaseRecord: workflowHistory.NextRecord("workflow_state_exit"), StateName: current, Reason: reason, ByAgent: view.Agent.Name, DerivedFromIDs: []string{eval.RecordID()}})
+		if next != "" {
+			workflowHistory.Append(logs.WorkflowTransitionRecord{WorkflowBaseRecord: workflowHistory.NextRecord("workflow_transition"), FromState: current, ToState: next, Trigger: trigger, DerivedFromIDs: []string{eval.RecordID()}})
+		}
+	}
+	if next != "" {
+		sessionHistory.Append(logs.StateEnterRecord{SessionBaseRecord: sessionHistory.NextRecord("state_enter"), Chart: "workflow", StateName: next, DerivedFromIDs: []string{eval.RecordID()}})
+		return true
+	}
+	return false
 }
 
 func latestStateStartMillis(history *logs.SessionHistory, chart string) int64 {

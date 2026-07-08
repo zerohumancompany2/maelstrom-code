@@ -64,9 +64,15 @@ func formatStateTask(session runtime.SessionView, history *logs.SessionHistory) 
 	if strings.TrimSpace(session.Cognitive.Outputs.SchemaName) != "" || len(session.Cognitive.Outputs.RequiredFields) > 0 {
 		parts = append(parts, fmt.Sprintf("Required output schema: %s. Required fields: %s.", strings.TrimSpace(session.Cognitive.Outputs.SchemaName), joinList(session.Cognitive.Outputs.RequiredFields)))
 	}
-	if runtime.ShouldFinalizeCognitive(session.Cognitive, history) {
-		attempt := logs.CountFinalizationRetriesSinceStateEnter(history, "cognitive") + 1
-		parts = append(parts, fmt.Sprintf("Finalization mode: tool use is closed for this task. Return JSON only matching the required output schema. Finalization attempt: %d.", attempt))
+	if mode := runtime.ResolveFinalizationMode(session.Cognitive, session.Workflow, history); mode.IsFinalizing {
+		buckets := []string{}
+		if mode.RequireCognitive {
+			buckets = append(buckets, `"cognitive"`)
+		}
+		if mode.RequireWorkflow {
+			buckets = append(buckets, `"workflow"`)
+		}
+		parts = append(parts, fmt.Sprintf("Finalization mode: tool use is closed for this task. Return a single JSON object whose top-level key(s) are %s, each holding its required output schema fields. Finalization attempt: %d.", strings.Join(buckets, " and "), mode.RetryAttempt))
 	}
 	if bounds := formatBounds("Task bounds", session.Cognitive.Bounds); bounds != "" {
 		parts = append(parts, bounds)
