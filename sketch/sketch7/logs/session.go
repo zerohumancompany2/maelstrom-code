@@ -146,9 +146,10 @@ type RetryRecord struct {
 
 type CompletionRecord struct {
 	SessionBaseRecord
-	Completed  bool
-	StopReason string
-	Iteration  int
+	Completed          bool
+	StopReason         string
+	Iteration          int
+	FinalizationReason string `json:"finalization_reason,omitempty"`
 }
 
 type StateEnterRecord struct {

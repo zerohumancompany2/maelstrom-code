@@ -233,3 +233,25 @@ func TestReduceSessionStatsMarksArgumentRetryRecoveredByLaterValidToolCall(t *te
 		t.Fatalf("retry stats = %+v, want recovered after same tool validated", stats.Retry)
 	}
 }
+
+func TestReduceSessionStatsExposesBucketOutputAndFinalizationReasons(t *testing.T) {
+	history := NewSessionHistory("session-buckets")
+	history.Append(OutputContractEvaluationRecord{SessionBaseRecord: history.NextRecord("output_contract_evaluation"), Chart: "cognitive", StateName: "observe", SchemaName: "cognitive_step_v1", ParseStatus: "valid_json_wrapped", ValidationStatus: "valid"})
+	history.Append(OutputContractEvaluationRecord{SessionBaseRecord: history.NextRecord("output_contract_evaluation"), Chart: "workflow", StateName: "triaging", SchemaName: "triage_v1", ParseStatus: "valid_json_wrapped", ValidationStatus: "missing_required_fields", RequiredFields: []string{"decision"}, MissingFields: []string{"decision"}})
+	history.Append(CompletionRecord{SessionBaseRecord: history.NextRecord("completion"), Completed: false, StopReason: "finalization_validation_failed", Iteration: 2, FinalizationReason: "cognitive_max_inference_turns+workflow_max_inference_turns"})
+
+	stats := ReduceSessionStats(history)
+	if stats.Output.ByChart["cognitive"].Valid != 1 {
+		t.Fatalf("cognitive chart stats = %+v, want one valid", stats.Output.ByChart["cognitive"])
+	}
+	workflow := stats.Output.ByChart["workflow"]
+	if workflow.Invalid != 1 || workflow.MissingRequired != 1 || workflow.MissingFieldCounts["decision"] != 1 {
+		t.Fatalf("workflow chart stats = %+v, want invalid missing decision", workflow)
+	}
+	if stats.Finalization.Failures != 1 || stats.Finalization.ByStopReason["finalization_validation_failed"] != 1 {
+		t.Fatalf("finalization stats = %+v, want one validation failure", stats.Finalization)
+	}
+	if stats.Finalization.ByBoundReason["cognitive_max_inference_turns+workflow_max_inference_turns"] != 1 {
+		t.Fatalf("finalization bound reasons = %+v, want combined reason", stats.Finalization.ByBoundReason)
+	}
+}

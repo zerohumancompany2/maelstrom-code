@@ -10,17 +10,20 @@ import (
 )
 
 type BatchSummary struct {
-	Total          int                    `json:"total"`
-	Passed         int                    `json:"passed"`
-	Failed         int                    `json:"failed"`
-	Errored        int                    `json:"errored"`
-	PassRate       float64                `json:"pass_rate"`
-	InvalidOutputs int                    `json:"invalid_outputs"`
-	StopReasons    map[string]int         `json:"stop_reasons"`
-	FailedChecks   map[string]int         `json:"failed_checks"`
-	ByCase         map[string]CaseSummary `json:"by_case"`
-	ByAgent        map[string]CaseSummary `json:"by_agent"`
-	ByModel        map[string]CaseSummary `json:"by_model"`
+	Total               int                    `json:"total"`
+	Passed              int                    `json:"passed"`
+	Failed              int                    `json:"failed"`
+	Errored             int                    `json:"errored"`
+	PassRate            float64                `json:"pass_rate"`
+	InvalidOutputs      int                    `json:"invalid_outputs"`
+	StopReasons         map[string]int         `json:"stop_reasons"`
+	OutputByChart       map[string]int         `json:"output_by_chart"`
+	InvalidByChart      map[string]int         `json:"invalid_by_chart"`
+	FinalizationReasons map[string]int         `json:"finalization_reasons"`
+	FailedChecks        map[string]int         `json:"failed_checks"`
+	ByCase              map[string]CaseSummary `json:"by_case"`
+	ByAgent             map[string]CaseSummary `json:"by_agent"`
+	ByModel             map[string]CaseSummary `json:"by_model"`
 }
 
 type CaseSummary struct {
@@ -74,11 +77,14 @@ func LoadRunRecords(path string) ([]RunRecord, error) {
 
 func SummarizeRuns(records []RunRecord) BatchSummary {
 	summary := BatchSummary{
-		StopReasons:  map[string]int{},
-		FailedChecks: map[string]int{},
-		ByCase:       map[string]CaseSummary{},
-		ByAgent:      map[string]CaseSummary{},
-		ByModel:      map[string]CaseSummary{},
+		StopReasons:         map[string]int{},
+		OutputByChart:       map[string]int{},
+		InvalidByChart:      map[string]int{},
+		FinalizationReasons: map[string]int{},
+		FailedChecks:        map[string]int{},
+		ByCase:              map[string]CaseSummary{},
+		ByAgent:             map[string]CaseSummary{},
+		ByModel:             map[string]CaseSummary{},
 	}
 	for _, record := range records {
 		summary.Total++
@@ -93,6 +99,13 @@ func SummarizeRuns(records []RunRecord) BatchSummary {
 		summary.InvalidOutputs += record.Stats.Output.Invalid
 		for reason, count := range record.Stats.StopReasons {
 			summary.StopReasons[reason] += count
+		}
+		for chart, stats := range record.Stats.Output.ByChart {
+			summary.OutputByChart[chart] += stats.Total
+			summary.InvalidByChart[chart] += stats.Invalid
+		}
+		for reason, count := range record.Stats.Finalization.ByBoundReason {
+			summary.FinalizationReasons[reason] += count
 		}
 		for _, check := range record.Eval.Checks {
 			if !check.Passed {
@@ -148,6 +161,9 @@ func PrintBatchSummary(summary BatchSummary) {
 	fmt.Printf("pass_rate: %.2f\n", summary.PassRate)
 	fmt.Printf("invalid_outputs: %d\n", summary.InvalidOutputs)
 	printCountMap("stop_reasons", summary.StopReasons)
+	printCountMap("output_by_chart", summary.OutputByChart)
+	printCountMap("invalid_by_chart", summary.InvalidByChart)
+	printCountMap("finalization_reasons", summary.FinalizationReasons)
 	printCountMap("failed_checks", summary.FailedChecks)
 	printCaseSummaries("by_case", summary.ByCase)
 	printCaseSummaries("by_agent", summary.ByAgent)

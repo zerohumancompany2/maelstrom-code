@@ -63,7 +63,7 @@ func TestSummarizeRunsAggregates(t *testing.T) {
 		{
 			RunID: "deck:case-1:2", CaseID: "case-1", AgentID: "agent-a", ModelID: "model-b", Passed: false,
 			Eval:  EvalResult{Checks: []EvalCheck{{Name: "max_invalid_outputs", Passed: false}}},
-			Stats: logs.SessionStats{StopReasons: map[string]int{"end_turn": 1}, Output: logs.OutputStats{Invalid: 3}},
+			Stats: logs.SessionStats{StopReasons: map[string]int{"end_turn": 1}, Output: logs.OutputStats{Invalid: 3, ByChart: map[string]logs.BucketOutputStats{"workflow": {Total: 2, Invalid: 2}, "cognitive": {Total: 1, Invalid: 1}}}, Finalization: logs.FinalizationStats{ByBoundReason: map[string]int{"workflow_max_inference_turns": 1}}},
 		},
 		{
 			RunID: "deck:case-2:1", CaseID: "case-2", AgentID: "agent-b", ModelLabel: "model-b", Passed: false, Error: "boom",
@@ -84,6 +84,12 @@ func TestSummarizeRunsAggregates(t *testing.T) {
 	}
 	if summary.FailedChecks["max_invalid_outputs"] != 1 {
 		t.Fatalf("failed checks = %+v", summary.FailedChecks)
+	}
+	if summary.OutputByChart["workflow"] != 2 || summary.InvalidByChart["workflow"] != 2 || summary.InvalidByChart["cognitive"] != 1 {
+		t.Fatalf("chart summaries output=%+v invalid=%+v", summary.OutputByChart, summary.InvalidByChart)
+	}
+	if summary.FinalizationReasons["workflow_max_inference_turns"] != 1 {
+		t.Fatalf("finalization reasons = %+v", summary.FinalizationReasons)
 	}
 	caseOne := summary.ByCase["case-1"]
 	if caseOne.Total != 2 || caseOne.Passed != 1 || caseOne.PassRate != 0.5 {

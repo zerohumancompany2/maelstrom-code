@@ -147,7 +147,7 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 					// fresh budget.
 					continue
 				}
-				sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: true, StopReason: finalizationStopReason(finalizationMode), Iteration: iteration})
+				sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: true, StopReason: finalizationStopReason(finalizationMode), Iteration: iteration, FinalizationReason: finalizationMode.Reason})
 				return nil
 			}
 			retryChart := "cognitive"
@@ -172,7 +172,7 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 			if finalizationMode.RequireWorkflow && !evalValid(workflowEval) {
 				sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "workflow", StateName: boundStateName(view, "workflow"), Reason: "validation_failed", ParseRecordIDs: evalRecordIDs(workflowEval)})
 			}
-			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: "finalization_validation_failed", Iteration: iteration})
+			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: false, StopReason: "finalization_validation_failed", Iteration: iteration, FinalizationReason: finalizationMode.Reason})
 			return fmt.Errorf("finalization failed validation")
 		}
 

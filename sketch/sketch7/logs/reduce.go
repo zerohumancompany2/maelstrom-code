@@ -12,6 +12,7 @@ type SessionStats struct {
 	AgentID          string                   `json:"agent_id"`
 	RecordCounts     RecordCounts             `json:"record_counts"`
 	Output           OutputStats              `json:"output"`
+	Finalization     FinalizationStats        `json:"finalization"`
 	Tools            ToolStats                `json:"tools"`
 	Retry            RetryStats               `json:"retry"`
 	Completion       CompletionStats          `json:"completion"`
@@ -53,19 +54,38 @@ type RecordCounts struct {
 }
 
 type OutputStats struct {
-	Total                 int            `json:"total"`
-	Valid                 int            `json:"valid"`
-	Invalid               int            `json:"invalid"`
-	MissingRequired       int            `json:"missing_required"`
-	WrongState            int            `json:"wrong_state"`
-	ByValidationStatus    map[string]int `json:"by_validation_status"`
-	ByParseStatus         map[string]int `json:"by_parse_status"`
-	BySchema              map[string]int `json:"by_schema"`
-	ByActionType          map[string]int `json:"by_action_type"`
-	ByTool                map[string]int `json:"by_tool"`
-	MissingFieldCounts    map[string]int `json:"missing_field_counts"`
-	CompletionSignalTrue  int            `json:"completion_signal_true"`
-	CompletionSignalFalse int            `json:"completion_signal_false"`
+	Total                 int                          `json:"total"`
+	Valid                 int                          `json:"valid"`
+	Invalid               int                          `json:"invalid"`
+	MissingRequired       int                          `json:"missing_required"`
+	WrongState            int                          `json:"wrong_state"`
+	ByChart               map[string]BucketOutputStats `json:"by_chart"`
+	ByValidationStatus    map[string]int               `json:"by_validation_status"`
+	ByParseStatus         map[string]int               `json:"by_parse_status"`
+	BySchema              map[string]int               `json:"by_schema"`
+	ByActionType          map[string]int               `json:"by_action_type"`
+	ByTool                map[string]int               `json:"by_tool"`
+	MissingFieldCounts    map[string]int               `json:"missing_field_counts"`
+	CompletionSignalTrue  int                          `json:"completion_signal_true"`
+	CompletionSignalFalse int                          `json:"completion_signal_false"`
+}
+
+type BucketOutputStats struct {
+	Total              int            `json:"total"`
+	Valid              int            `json:"valid"`
+	Invalid            int            `json:"invalid"`
+	MissingRequired    int            `json:"missing_required"`
+	WrongState         int            `json:"wrong_state"`
+	ByValidationStatus map[string]int `json:"by_validation_status"`
+	ByParseStatus      map[string]int `json:"by_parse_status"`
+	MissingFieldCounts map[string]int `json:"missing_field_counts"`
+}
+
+type FinalizationStats struct {
+	Completions   int            `json:"completions"`
+	Failures      int            `json:"failures"`
+	ByStopReason  map[string]int `json:"by_stop_reason"`
+	ByBoundReason map[string]int `json:"by_bound_reason"`
 }
 
 type ToolStats struct {
@@ -144,6 +164,7 @@ func ReduceSessionStats(history *SessionHistory) SessionStats {
 		ParseStatuses:    map[string]int{},
 		FilesRead:        map[string]int{},
 		Output: OutputStats{
+			ByChart:            map[string]BucketOutputStats{},
 			ByValidationStatus: map[string]int{},
 			ByParseStatus:      map[string]int{},
 			BySchema:           map[string]int{},
@@ -151,8 +172,9 @@ func ReduceSessionStats(history *SessionHistory) SessionStats {
 			ByTool:             map[string]int{},
 			MissingFieldCounts: map[string]int{},
 		},
-		Tools: ToolStats{ByReason: map[string]int{}},
-		Retry: RetryStats{ByReason: map[string]int{}, Attribution: RetryAttributionStats{ByCauseKind: map[string]int{}, ByTool: map[string]int{}, ByState: map[string]int{}}},
+		Finalization: FinalizationStats{ByStopReason: map[string]int{}, ByBoundReason: map[string]int{}},
+		Tools:        ToolStats{ByReason: map[string]int{}},
+		Retry:        RetryStats{ByReason: map[string]int{}, Attribution: RetryAttributionStats{ByCauseKind: map[string]int{}, ByTool: map[string]int{}, ByState: map[string]int{}}},
 	}
 	if history == nil {
 		return stats
@@ -282,6 +304,28 @@ func reduceOutput(stats SessionStats, record OutputContractEvaluationRecord) Ses
 		stats.Output.WrongState++
 		stateStats.WrongState++
 	}
+	chartStats := stats.Output.ByChart[record.Chart]
+	ensureBucketOutputMaps(&chartStats)
+	chartStats.Total++
+	incrementIfPresent(chartStats.ByValidationStatus, record.ValidationStatus)
+	incrementIfPresent(chartStats.ByParseStatus, record.ParseStatus)
+	if record.ValidationStatus == "valid" {
+		chartStats.Valid++
+	} else {
+		chartStats.Invalid++
+	}
+	if len(record.MissingFields) > 0 {
+		chartStats.MissingRequired++
+		for _, field := range record.MissingFields {
+			incrementIfPresent(chartStats.MissingFieldCounts, field)
+		}
+	}
+	if record.WrongState {
+		chartStats.WrongState++
+	}
+	if strings.TrimSpace(record.Chart) != "" {
+		stats.Output.ByChart[record.Chart] = chartStats
+	}
 	stats.ByState[record.StateName] = stateStats
 	return stats
 }
@@ -404,6 +448,15 @@ func computeRecoveredRetries(history *SessionHistory, index map[string]SessionRe
 func reduceCompletion(stats SessionStats, record CompletionRecord, latestCognitiveState, latestWorkflowState string) SessionStats {
 	stats.Completion.Total++
 	incrementIfPresent(stats.StopReasons, record.StopReason)
+	if isFinalizationStopReason(record.StopReason) {
+		if record.Completed {
+			stats.Finalization.Completions++
+		} else {
+			stats.Finalization.Failures++
+		}
+		incrementIfPresent(stats.Finalization.ByStopReason, record.StopReason)
+		incrementIfPresent(stats.Finalization.ByBoundReason, record.FinalizationReason)
+	}
 	stats.Completion.LatestCompleted = record.Completed
 	stats.Completion.LatestStopReason = record.StopReason
 	stats.Completion.LatestIteration = record.Iteration
@@ -415,6 +468,15 @@ func reduceCompletion(stats SessionStats, record CompletionRecord, latestCogniti
 		stats.Completion.Incomplete++
 	}
 	return stats
+}
+
+func isFinalizationStopReason(reason string) bool {
+	switch reason {
+	case "state_finalized", "workflow_state_finalized", "combined_state_finalized", "finalization_validation_failed":
+		return true
+	default:
+		return false
+	}
 }
 
 func SortedMapKeys[T any](items map[string]T) []string {
@@ -589,6 +651,18 @@ func ensurePerToolMaps(stats *PerToolStats) {
 }
 
 func ensurePerStateMaps(stats *PerStateStats) {
+	if stats.ByValidationStatus == nil {
+		stats.ByValidationStatus = map[string]int{}
+	}
+	if stats.ByParseStatus == nil {
+		stats.ByParseStatus = map[string]int{}
+	}
+	if stats.MissingFieldCounts == nil {
+		stats.MissingFieldCounts = map[string]int{}
+	}
+}
+
+func ensureBucketOutputMaps(stats *BucketOutputStats) {
 	if stats.ByValidationStatus == nil {
 		stats.ByValidationStatus = map[string]int{}
 	}

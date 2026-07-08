@@ -86,6 +86,7 @@ func combineSessionStats(a, b SessionStats) SessionStats {
 		AgentID:          firstNonEmpty(a.AgentID, b.AgentID),
 		RecordCounts:     combineRecordCounts(a.RecordCounts, b.RecordCounts),
 		Output:           combineOutputStats(a.Output, b.Output),
+		Finalization:     combineFinalizationStats(a.Finalization, b.Finalization),
 		Tools:            combineToolStats(a.Tools, b.Tools),
 		Retry:            combineRetryStats(a.Retry, b.Retry),
 		Completion:       combineCompletionStats(a.Completion, b.Completion),
@@ -128,6 +129,7 @@ func combineOutputStats(a, b OutputStats) OutputStats {
 		Invalid:               a.Invalid + b.Invalid,
 		MissingRequired:       a.MissingRequired + b.MissingRequired,
 		WrongState:            a.WrongState + b.WrongState,
+		ByChart:               combineBucketOutputStats(a.ByChart, b.ByChart),
 		ByValidationStatus:    combineCountMaps(a.ByValidationStatus, b.ByValidationStatus),
 		ByParseStatus:         combineCountMaps(a.ByParseStatus, b.ByParseStatus),
 		BySchema:              combineCountMaps(a.BySchema, b.BySchema),
@@ -136,6 +138,39 @@ func combineOutputStats(a, b OutputStats) OutputStats {
 		MissingFieldCounts:    combineCountMaps(a.MissingFieldCounts, b.MissingFieldCounts),
 		CompletionSignalTrue:  a.CompletionSignalTrue + b.CompletionSignalTrue,
 		CompletionSignalFalse: a.CompletionSignalFalse + b.CompletionSignalFalse,
+	}
+}
+
+func combineBucketOutputStats(a, b map[string]BucketOutputStats) map[string]BucketOutputStats {
+	result := map[string]BucketOutputStats{}
+	for key, value := range a {
+		result[key] = combineBucketOutputStat(result[key], value)
+	}
+	for key, value := range b {
+		result[key] = combineBucketOutputStat(result[key], value)
+	}
+	return result
+}
+
+func combineBucketOutputStat(a, b BucketOutputStats) BucketOutputStats {
+	return BucketOutputStats{
+		Total:              a.Total + b.Total,
+		Valid:              a.Valid + b.Valid,
+		Invalid:            a.Invalid + b.Invalid,
+		MissingRequired:    a.MissingRequired + b.MissingRequired,
+		WrongState:         a.WrongState + b.WrongState,
+		ByValidationStatus: combineCountMaps(a.ByValidationStatus, b.ByValidationStatus),
+		ByParseStatus:      combineCountMaps(a.ByParseStatus, b.ByParseStatus),
+		MissingFieldCounts: combineCountMaps(a.MissingFieldCounts, b.MissingFieldCounts),
+	}
+}
+
+func combineFinalizationStats(a, b FinalizationStats) FinalizationStats {
+	return FinalizationStats{
+		Completions:   a.Completions + b.Completions,
+		Failures:      a.Failures + b.Failures,
+		ByStopReason:  combineCountMaps(a.ByStopReason, b.ByStopReason),
+		ByBoundReason: combineCountMaps(a.ByBoundReason, b.ByBoundReason),
 	}
 }
 
