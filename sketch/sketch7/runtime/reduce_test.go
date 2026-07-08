@@ -378,3 +378,35 @@ func TestMaxFinalizationRetriesForModeTakesLargestParticipatingBudget(t *testing
 		t.Fatalf("workflow-only budget = %d, want 3", got)
 	}
 }
+
+func TestReduceWorkflowStateCarriesAllowedTriggersFromStateAndTransitions(t *testing.T) {
+	history := logs.NewWorkflowHistory("workflow-triggers")
+	def := defs.WorkflowDefinition{Statechart: defs.StatechartDefinition{
+		InitialState: "triaging",
+		States:       []defs.StateDefinition{{Name: "triaging", AllowedTriggers: []string{"manual_escalate"}}, {Name: "done"}},
+		Transitions:  []defs.TransitionDefinition{{From: "triaging", To: "done", Trigger: "finish"}, {From: "other", To: "done", Trigger: "ignore"}},
+	}}
+
+	view := ReduceWorkflowState(history, def, "builder")
+	if len(view.AllowedTriggers) != 2 || view.AllowedTriggers[0] != "manual_escalate" || view.AllowedTriggers[1] != "finish" {
+		t.Fatalf("AllowedTriggers = %v, want [manual_escalate finish]", view.AllowedTriggers)
+	}
+}
+
+func TestFinalizationRetryCountForModeUsesMaxParticipatingChartWindow(t *testing.T) {
+	history := logs.NewSessionHistory("session-retry-count")
+	appendStateEnter(history, "workflow", "triaging")
+	history.Append(logs.RetryRecord{SessionBaseRecord: history.NextRecord("retry"), Reason: "invalid_finalization_output", Attempt: 1})
+	history.Append(logs.RetryRecord{SessionBaseRecord: history.NextRecord("retry"), Reason: "invalid_finalization_output", Attempt: 2})
+	appendStateEnter(history, "cognitive", "observe")
+	history.Append(logs.RetryRecord{SessionBaseRecord: history.NextRecord("retry"), Reason: "invalid_finalization_output", Attempt: 1})
+
+	combined := FinalizationMode{IsFinalizing: true, RequireCognitive: true, RequireWorkflow: true}
+	if got := FinalizationRetryCountForMode(combined, history); got != 3 {
+		t.Fatalf("combined retry count = %d, want max participating count 3", got)
+	}
+	cognitiveOnly := FinalizationMode{IsFinalizing: true, RequireCognitive: true}
+	if got := FinalizationRetryCountForMode(cognitiveOnly, history); got != 1 {
+		t.Fatalf("cognitive retry count = %d, want 1", got)
+	}
+}

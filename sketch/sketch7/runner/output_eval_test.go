@@ -256,8 +256,22 @@ func TestEvaluateAssistantOutputFinalizationMalformedJSONRecordsBothBuckets(t *t
 		t.Fatalf("got %d records, want 2", len(records))
 	}
 	for _, record := range records {
-		if record.ParseStatus != "plain_text" || record.ValidationStatus != "missing_schema_output" {
-			t.Fatalf("record = %+v, want plain_text/missing_schema_output", record)
+		if record.ParseStatus != "invalid_json" || record.ValidationStatus != "invalid_json" {
+			t.Fatalf("record = %+v, want invalid_json/invalid_json", record)
 		}
+	}
+}
+
+func TestEvaluateAssistantOutputWorkflowFinalizationRejectsInvalidTransition(t *testing.T) {
+	history := logs.NewSessionHistory("session-workflow-invalid-transition")
+	session := combinedFinalizationSession()
+	session.Workflow.AllowedTriggers = []string{"finish"}
+	mode := runtime.FinalizationMode{IsFinalizing: true, RequireWorkflow: true}
+	records := evaluateAssistantOutput(history, session, mode, provider.AssistantOutput{Content: `{"workflow":{"decision":"ship it","transition":"bogus"}}`}, "assistant-1")
+	if len(records) != 1 {
+		t.Fatalf("got %d records, want 1", len(records))
+	}
+	if records[0].ValidationStatus != "invalid_transition_signal" {
+		t.Fatalf("ValidationStatus = %q, want invalid_transition_signal", records[0].ValidationStatus)
 	}
 }

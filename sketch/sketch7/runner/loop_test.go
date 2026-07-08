@@ -1570,3 +1570,74 @@ func TestLoopRunCombinedFinalizationRetriesBothBucketsAfterPartialFailure(t *tes
 		t.Fatalf("expected missing workflow attribution and retry, got %#v", sessionHistory.Records)
 	}
 }
+
+func TestLoopRunWorkflowFinalizationTransitionPersistsWorkflowHistory(t *testing.T) {
+	providerScript := &scriptedProvider{responses: []provider.Response{
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"workflow":{"decision":"resolved","transition":"finish"}}`}}},
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `Done after workflow transition.`}}},
+	}}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model"}
+	agentDef := defs.AgentDefinition{Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}}, Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{Name: "observe", Prompt: "Observe."}}}}
+	workflowDef := boundedWorkflowFinalizationDef(1, 0)
+	workflowDef.Statechart.States = append(workflowDef.Statechart.States, defs.StateDefinition{Name: "done"})
+	workflowDef.Statechart.Transitions = []defs.TransitionDefinition{{From: "triaging", To: "done", Trigger: "finish"}}
+	sessionHistory := logs.NewSessionHistory("session-workflow-transition-persist")
+	workflowHistory := logs.NewWorkflowHistory("workflow-transition-persist")
+	seedWorkflowBoundHit(sessionHistory, workflowHistory.WorkflowID)
+
+	if err := loop.Run(agent, agentDef, &workflowDef, sessionHistory, workflowHistory); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+	if len(providerScript.requests) != 2 {
+		t.Fatalf("got %d provider requests, want transition to continue into second request", len(providerScript.requests))
+	}
+	foundSessionEnterDone := false
+	for _, record := range sessionHistory.Records {
+		if v, ok := record.(logs.StateEnterRecord); ok && v.Chart == "workflow" && v.StateName == "done" {
+			foundSessionEnterDone = true
+		}
+	}
+	foundWorkflowExit := false
+	foundWorkflowTransition := false
+	for _, record := range workflowHistory.Records {
+		switch v := record.(type) {
+		case logs.WorkflowStateExitRecord:
+			if v.StateName == "triaging" && v.Reason == "transition" {
+				foundWorkflowExit = true
+			}
+		case logs.WorkflowTransitionRecord:
+			if v.FromState == "triaging" && v.ToState == "done" && v.Trigger == "finish" {
+				foundWorkflowTransition = true
+			}
+		}
+	}
+	if !foundSessionEnterDone || !foundWorkflowExit || !foundWorkflowTransition {
+		t.Fatalf("expected workflow transition lifecycle records, session=%#v workflow=%#v", sessionHistory.Records, workflowHistory.Records)
+	}
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := logs.SaveState(path, sessionHistory, workflowHistory); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	_, loadedWorkflow, err := logs.LoadState(path)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	loadedExit := false
+	loadedTransition := false
+	for _, record := range loadedWorkflow.Records {
+		switch v := record.(type) {
+		case *logs.WorkflowStateExitRecord:
+			if v.StateName == "triaging" && v.Reason == "transition" {
+				loadedExit = true
+			}
+		case *logs.WorkflowTransitionRecord:
+			if v.FromState == "triaging" && v.ToState == "done" && v.Trigger == "finish" {
+				loadedTransition = true
+			}
+		}
+	}
+	if !loadedExit || !loadedTransition {
+		t.Fatalf("loaded workflow records = %#v, want persisted exit and transition", loadedWorkflow.Records)
+	}
+}

@@ -89,7 +89,8 @@ func evaluateFinalizationOutput(history *logs.SessionHistory, session runtime.Se
 // continue, or done=true when a terminal parse/wrapper status was recorded.
 func resolveFinalizationBucket(record *logs.OutputContractEvaluationRecord, payload map[string]any, parseErr error, bucketName string) (map[string]any, bool) {
 	if parseErr != nil {
-		// Defaults already record plain_text / missing_schema_output.
+		record.ParseStatus = "invalid_json"
+		record.ValidationStatus = "invalid_json"
 		return nil, true
 	}
 	if !hasAnyBucketKeys(payload) {
@@ -171,7 +172,7 @@ func validateCognitiveBucket(record *logs.OutputContractEvaluationRecord, view r
 func validateWorkflowBucket(record *logs.OutputContractEvaluationRecord, view runtime.WorkflowView, payload map[string]any) {
 	applyStateValidation(record, runtime.CognitiveView{CurrentState: view.CurrentState}, payload)
 	applyActionFields(record, payload)
-	applyTransitionValidation(record, nil, payload)
+	applyTransitionValidation(record, view.AllowedTriggers, payload)
 	applyCompletionSignal(record, payload)
 	applyRequiredFieldValidation(record, view.Outputs.RequiredFields, payload)
 	applyToolAttribution(record, payload)

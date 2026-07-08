@@ -150,12 +150,8 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 				sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: true, StopReason: finalizationStopReason(finalizationMode), Iteration: iteration, FinalizationReason: finalizationMode.Reason})
 				return nil
 			}
-			retryChart := "cognitive"
-			if !finalizationMode.RequireCognitive {
-				retryChart = "workflow"
-			}
 			retryBudget := runtime.MaxFinalizationRetriesForMode(finalizationMode, view.Cognitive, view.Workflow)
-			if logs.CountFinalizationRetriesSinceStateEnter(sessionHistory, retryChart) < retryBudget {
+			if runtime.FinalizationRetryCountForMode(finalizationMode, sessionHistory) < retryBudget {
 				derived := []string{}
 				if finalizationMode.RequireCognitive && !evalValid(cognitiveEval) && cognitiveEval != nil {
 					derived = append(derived, cognitiveEval.RecordID())
@@ -163,7 +159,7 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 				if finalizationMode.RequireWorkflow && !evalValid(workflowEval) && workflowEval != nil {
 					derived = append(derived, workflowEval.RecordID())
 				}
-				sessionHistory.Append(logs.RetryRecord{SessionBaseRecord: sessionHistory.NextRecord("retry"), Reason: "invalid_finalization_output", Attempt: logs.CountFinalizationRetriesSinceStateEnter(sessionHistory, retryChart) + 1, Recovered: false, DerivedFrom: derived})
+				sessionHistory.Append(logs.RetryRecord{SessionBaseRecord: sessionHistory.NextRecord("retry"), Reason: "invalid_finalization_output", Attempt: runtime.FinalizationRetryCountForMode(finalizationMode, sessionHistory) + 1, Recovered: false, DerivedFrom: derived})
 				continue
 			}
 			if finalizationMode.RequireCognitive && !evalValid(cognitiveEval) {

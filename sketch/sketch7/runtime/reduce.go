@@ -62,6 +62,7 @@ func ReduceWorkflowState(history *logs.WorkflowHistory, def defs.WorkflowDefinit
 		}
 	}
 	view.VisibleTools, view.EnabledTools = toolPolicyForState(def.Statechart, view.CurrentState)
+	view.AllowedTriggers = allowedTriggersForState(def.Statechart, view.CurrentState)
 	view.Inputs, view.Outputs, view.Completion, view.Bounds = stateContractsForState(def.Statechart, view.CurrentState)
 	return view
 }
@@ -138,6 +139,35 @@ func toolPolicyForState(chart defs.StatechartDefinition, name string) ([]string,
 	return nil, nil
 }
 
+func allowedTriggersForState(chart defs.StatechartDefinition, name string) []string {
+	seen := map[string]bool{}
+	triggers := []string{}
+	for _, state := range chart.States {
+		if state.Name != name {
+			continue
+		}
+		for _, trigger := range state.AllowedTriggers {
+			trigger = strings.TrimSpace(trigger)
+			if trigger != "" && !seen[trigger] {
+				seen[trigger] = true
+				triggers = append(triggers, trigger)
+			}
+		}
+		break
+	}
+	for _, transition := range chart.Transitions {
+		if transition.From != name {
+			continue
+		}
+		trigger := strings.TrimSpace(transition.Trigger)
+		if trigger != "" && !seen[trigger] {
+			seen[trigger] = true
+			triggers = append(triggers, trigger)
+		}
+	}
+	return triggers
+}
+
 // CognitiveBoundHitReason returns the exhausted cognitive budget
 // ("max_inference_turns" or "max_tool_calls"), or "" when no bound is hit.
 // A non-empty reason is only reported when cognitive outputs are declared,
@@ -203,12 +233,25 @@ func ResolveFinalizationMode(cognitive CognitiveView, workflow *WorkflowView, hi
 		return mode
 	}
 	mode.Reason = strings.Join(reasons, "+")
-	retryChart := "cognitive"
-	if !mode.RequireCognitive {
-		retryChart = "workflow"
-	}
-	mode.RetryAttempt = logs.CountFinalizationRetriesSinceStateEnter(history, retryChart) + 1
+	mode.RetryAttempt = FinalizationRetryCountForMode(mode, history) + 1
 	return mode
+}
+
+// FinalizationRetryCountForMode returns the retry count relevant to the active
+// mode. Combined finalization re-requests all required buckets together, so it
+// uses the maximum count visible in any participating chart window instead of
+// implicitly charging only the cognitive chart.
+func FinalizationRetryCountForMode(mode FinalizationMode, history *logs.SessionHistory) int {
+	count := 0
+	if mode.RequireCognitive {
+		count = logs.CountFinalizationRetriesSinceStateEnter(history, "cognitive")
+	}
+	if mode.RequireWorkflow {
+		if workflow := logs.CountFinalizationRetriesSinceStateEnter(history, "workflow"); workflow > count {
+			count = workflow
+		}
+	}
+	return count
 }
 
 // GetMaxFinalizationRetries returns the max finalization retries, defaulting to 1 if not set.

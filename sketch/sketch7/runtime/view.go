@@ -36,17 +36,18 @@ type CognitiveView struct {
 }
 
 type WorkflowView struct {
-	WorkflowID     string
-	CurrentState   string
-	VisibleTools   []string
-	EnabledTools   []string
-	Description    string
-	Context        string
-	LastBoundAgent string
-	Inputs         defs.StateInputContract
-	Outputs        defs.StateOutputContract
-	Completion     defs.StateCompletionContract
-	Bounds         defs.StateBoundsContract
+	WorkflowID      string
+	CurrentState    string
+	VisibleTools    []string
+	EnabledTools    []string
+	AllowedTriggers []string
+	Description     string
+	Context         string
+	LastBoundAgent  string
+	Inputs          defs.StateInputContract
+	Outputs         defs.StateOutputContract
+	Completion      defs.StateCompletionContract
+	Bounds          defs.StateBoundsContract
 }
 
 type BindingView struct {
