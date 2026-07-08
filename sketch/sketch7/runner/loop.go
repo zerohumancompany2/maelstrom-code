@@ -591,11 +591,17 @@ func finalizationResponseFormat(mode runtime.FinalizationMode, view runtime.Sess
 	}
 	if mode.RequireWorkflow && view.Workflow != nil {
 		outputs := view.Workflow.Outputs
+		fieldEnums := map[string][]string{}
+		if len(view.Workflow.AllowedTriggers) > 0 {
+			fieldEnums["transition"] = append([]string(nil), view.Workflow.AllowedTriggers...)
+			fieldEnums["next_step_signal"] = append([]string(nil), view.Workflow.AllowedTriggers...)
+		}
 		buckets = append(buckets, provider.BucketFormat{
 			Name:           "workflow",
 			RequiredFields: append([]string(nil), outputs.RequiredFields...),
 			OptionalFields: append([]string(nil), outputs.OptionalFields...),
 			FieldTypes:     map[string]string{"completion_signal": "boolean"},
+			FieldEnums:     fieldEnums,
 			Strict:         outputs.Strict,
 		})
 		if name := strings.TrimSpace(outputs.SchemaName); name != "" {

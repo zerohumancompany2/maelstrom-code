@@ -90,6 +90,9 @@ func formatStateTask(session runtime.SessionView, history *logs.SessionHistory) 
 		if strings.TrimSpace(wf.Outputs.SchemaName) != "" || len(wf.Outputs.RequiredFields) > 0 {
 			parts = append(parts, fmt.Sprintf("Workflow output schema: %s. Required fields: %s.", strings.TrimSpace(wf.Outputs.SchemaName), joinList(wf.Outputs.RequiredFields)))
 		}
+		if len(wf.AllowedTriggers) > 0 {
+			parts = append(parts, fmt.Sprintf("Workflow next-step signals: %s", joinList(wf.AllowedTriggers)))
+		}
 		if len(wf.Inputs.Required) > 0 {
 			parts = append(parts, fmt.Sprintf("Workflow required inputs: %s", joinList(wf.Inputs.Required)))
 		}

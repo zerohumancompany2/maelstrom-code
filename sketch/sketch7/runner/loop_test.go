@@ -1592,6 +1592,14 @@ func TestLoopRunWorkflowFinalizationTransitionPersistsWorkflowHistory(t *testing
 	if len(providerScript.requests) != 2 {
 		t.Fatalf("got %d provider requests, want transition to continue into second request", len(providerScript.requests))
 	}
+	format := providerScript.requests[0].ResponseFormat
+	if format == nil || len(format.Buckets) != 1 {
+		t.Fatalf("ResponseFormat = %+v, want one workflow bucket", format)
+	}
+	enums := format.Buckets[0].FieldEnums["transition"]
+	if len(enums) != 1 || enums[0] != "finish" {
+		t.Fatalf("workflow bucket transition enums = %+v, want [finish]", enums)
+	}
 	foundSessionEnterDone := false
 	for _, record := range sessionHistory.Records {
 		if v, ok := record.(logs.StateEnterRecord); ok && v.Chart == "workflow" && v.StateName == "done" {

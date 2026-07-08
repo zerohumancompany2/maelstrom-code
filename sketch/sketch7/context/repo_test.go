@@ -72,14 +72,15 @@ func TestBuildSectionsStateTaskRendersTaskFacingGuidance(t *testing.T) {
 			Bounds:       defs.StateBoundsContract{MaxInferenceTurns: 3, MaxToolCalls: 6, MaxFinalizationRetries: 1},
 		},
 		Workflow: &runtime.WorkflowView{
-			WorkflowID:   "wf-001",
-			CurrentState: "repo_orientation",
-			Description:  "Conversation to execution",
-			Context:      "Use this workflow for coding tasks.",
-			EnabledTools: []string{"read_file"},
-			Inputs:       defs.StateInputContract{Required: []string{"acceptance_criteria"}},
-			Outputs:      defs.StateOutputContract{SchemaName: "workflow_step_v1", RequiredFields: []string{"artifact_status"}},
-			Completion:   defs.StateCompletionContract{SuccessWhen: []string{"artifact_status == ready"}},
+			WorkflowID:      "wf-001",
+			CurrentState:    "repo_orientation",
+			Description:     "Conversation to execution",
+			Context:         "Use this workflow for coding tasks.",
+			EnabledTools:    []string{"read_file"},
+			Inputs:          defs.StateInputContract{Required: []string{"acceptance_criteria"}},
+			Outputs:         defs.StateOutputContract{SchemaName: "workflow_step_v1", RequiredFields: []string{"artifact_status"}},
+			Completion:      defs.StateCompletionContract{SuccessWhen: []string{"artifact_status == ready"}},
+			AllowedTriggers: []string{"orientation_complete"},
 		},
 	}
 	sections := BuildSections(agentDef, session, history, RepoContextOptions{})
@@ -101,6 +102,9 @@ func TestBuildSectionsStateTaskRendersTaskFacingGuidance(t *testing.T) {
 	}
 	if !strings.Contains(content, "Workflow output schema: workflow_step_v1") {
 		t.Fatalf("content = %q, want workflow output schema", content)
+	}
+	if !strings.Contains(content, "Workflow next-step signals: orientation_complete") {
+		t.Fatalf("content = %q, want workflow next-step signals", content)
 	}
 	if !strings.Contains(content, "Required inputs: task_statement") {
 		t.Fatalf("content = %q, want cognitive input expectations", content)
