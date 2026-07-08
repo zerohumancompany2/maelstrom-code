@@ -1374,3 +1374,48 @@ func helper() string {
 		t.Fatalf("got %d provider requests, want 6", len(providerScript.requests))
 	}
 }
+
+func TestLoopRunFinalizesWhenToolBudgetExhaustedWithOutputContract(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "sample.txt"), []byte("evidence"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	raw, _ := json.Marshal(map[string]string{"path": "sample.txt"})
+	providerScript := &scriptedProvider{responses: []provider.Response{
+		{Outputs: []provider.Output{provider.ToolRequestOutput{Call: provider.ToolCall{CallID: "call-budget", ToolName: "read_file", Arguments: map[string]string{"path": "sample.txt"}, RawArgs: raw}}}},
+		{Outputs: []provider.Output{provider.AssistantOutput{Content: `{"cognitive":{"summary":"evidence gathered"}}`}}},
+	}}
+	loop := Loop{Provider: providerScript, Tools: tools.NewRegistry(tools.ReadFileTool{RootDir: root}), Projections: []prompt.Projection{prompt.ContextProjection{}}, MaxHistory: 10}
+	agent := runtime.Agent{Name: "builder", ProviderName: "fake", ProviderRef: "fake-model", ToolNames: []string{"read_file"}}
+	agentDef := defs.AgentDefinition{
+		Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}},
+		Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{
+			Name:         "observe",
+			Prompt:       "Gather evidence, then conclude.",
+			EnabledTools: []string{"read_file"},
+			Outputs:      defs.StateOutputContract{SchemaName: "cognitive_step_v1", RequiredFields: []string{"summary"}},
+			Bounds:       defs.StateBoundsContract{MaxToolCalls: 1},
+		}}},
+	}
+	sessionHistory := logs.NewSessionHistory("session-tool-budget-finalize")
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: "Inspect the sample."})
+
+	if err := loop.Run(agent, agentDef, nil, sessionHistory, nil); err != nil {
+		t.Fatalf("loop run = %v, want finalization instead of max_tool_calls failure", err)
+	}
+	if len(providerScript.requests) != 2 {
+		t.Fatalf("got %d provider requests, want tool turn plus finalization turn", len(providerScript.requests))
+	}
+	if len(providerScript.requests[1].Tools) != 0 {
+		t.Fatalf("finalization request exposed tools: %+v", providerScript.requests[1].Tools)
+	}
+	foundCompletion := false
+	for _, record := range sessionHistory.Records {
+		if v, ok := record.(logs.CompletionRecord); ok && v.Completed && v.StopReason == "state_finalized" {
+			foundCompletion = true
+		}
+	}
+	if !foundCompletion {
+		t.Fatalf("expected state_finalized completion, got %#v", sessionHistory.Records)
+	}
+}

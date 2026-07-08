@@ -134,18 +134,23 @@ func toolPolicyForState(chart defs.StatechartDefinition, name string) ([]string,
 	return nil, nil
 }
 
-// IsCognitiveBoundHit checks if the cognitive state's maxInferenceTurns bound has been hit.
-// Returns true if the bound is exceeded and cognitive outputs are declared.
+// IsCognitiveBoundHit checks if the cognitive state's inference-turn or
+// tool-call budget has been exhausted. Returns true only when cognitive
+// outputs are declared, since finalization needs a contract to finalize
+// against; exhausting a budget then forces finalization instead of failing
+// the session.
 func IsCognitiveBoundHit(view CognitiveView, history *logs.SessionHistory) bool {
-	if view.Bounds.MaxInferenceTurns <= 0 {
-		return false
-	}
-	// Check if cognitive outputs are declared (required for finalization mode)
+	// Cognitive outputs must be declared for finalization mode to apply.
 	if view.Outputs.SchemaName == "" && len(view.Outputs.RequiredFields) == 0 {
 		return false
 	}
-	turns := logs.CountInferenceTurnsSinceStateEnter(history, "cognitive")
-	return turns >= view.Bounds.MaxInferenceTurns
+	if view.Bounds.MaxInferenceTurns > 0 && logs.CountInferenceTurnsSinceStateEnter(history, "cognitive") >= view.Bounds.MaxInferenceTurns {
+		return true
+	}
+	if view.Bounds.MaxToolCalls > 0 && logs.CountToolCallsSinceStateEnter(history, "cognitive") >= view.Bounds.MaxToolCalls {
+		return true
+	}
+	return false
 }
 
 // ShouldFinalizeCognitive checks if we should enter cognitive finalization mode.
