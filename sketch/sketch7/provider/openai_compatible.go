@@ -186,7 +186,7 @@ func (p *OpenAICompatibleProvider) buildHTTPBody(request Request) ([]byte, error
 }
 
 func toOpenAIResponseFormat(format *StructuredOutputFormat, hasTools bool) any {
-	if format == nil || strings.TrimSpace(format.Name) == "" || len(format.RequiredFields) == 0 {
+	if format == nil || strings.TrimSpace(format.Name) == "" {
 		return nil
 	}
 	// Forced JSON modes suppress tool calling on most OpenAI-compatible
@@ -195,14 +195,25 @@ func toOpenAIResponseFormat(format *StructuredOutputFormat, hasTools bool) any {
 	if hasTools {
 		return nil
 	}
-	schema := structuredOutputJSONSchema(format.RequiredFields, format.OptionalFields, format.FieldTypes, format.FieldEnums, format.Strict)
-	if strings.TrimSpace(format.WrapBucket) != "" {
-		schema = map[string]any{
-			"type":                 "object",
-			"properties":           map[string]any{format.WrapBucket: schema},
-			"required":             []string{format.WrapBucket},
-			"additionalProperties": false,
+	var schema map[string]any
+	if len(format.Buckets) > 0 {
+		schema = bucketWrapperJSONSchema(format.Buckets)
+	} else {
+		if len(format.RequiredFields) == 0 {
+			return nil
 		}
+		schema = structuredOutputJSONSchema(format.RequiredFields, format.OptionalFields, format.FieldTypes, format.FieldEnums, format.Strict)
+		if strings.TrimSpace(format.WrapBucket) != "" {
+			schema = map[string]any{
+				"type":                 "object",
+				"properties":           map[string]any{format.WrapBucket: schema},
+				"required":             []string{format.WrapBucket},
+				"additionalProperties": false,
+			}
+		}
+	}
+	if schema == nil {
+		return nil
 	}
 	return map[string]any{
 		"type": "json_schema",
@@ -211,6 +222,30 @@ func toOpenAIResponseFormat(format *StructuredOutputFormat, hasTools bool) any {
 			"strict": format.Strict,
 			"schema": schema,
 		},
+	}
+}
+
+// bucketWrapperJSONSchema builds the combined wrapper object schema with each
+// bucket's contract nested under its required top-level key.
+func bucketWrapperJSONSchema(buckets []BucketFormat) map[string]any {
+	properties := map[string]any{}
+	required := make([]string, 0, len(buckets))
+	for _, bucket := range buckets {
+		name := strings.TrimSpace(bucket.Name)
+		if name == "" || len(bucket.RequiredFields) == 0 {
+			continue
+		}
+		properties[name] = structuredOutputJSONSchema(bucket.RequiredFields, bucket.OptionalFields, bucket.FieldTypes, bucket.FieldEnums, bucket.Strict)
+		required = append(required, name)
+	}
+	if len(required) == 0 {
+		return nil
+	}
+	return map[string]any{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
 	}
 }
 

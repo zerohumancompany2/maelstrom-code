@@ -394,3 +394,62 @@ func TestParseOpenAIResponseKeepsToolCallsOverReasoning(t *testing.T) {
 		t.Fatalf("output = %#v, want ToolRequestOutput", resp.Outputs[0])
 	}
 }
+
+func TestOpenAICompatibleProviderBuildsCombinedBucketSchema(t *testing.T) {
+	p := &OpenAICompatibleProvider{}
+	body, err := p.buildHTTPBody(Request{
+		ModelRef: "local-model",
+		Lines:    []RequestLine{{Kind: "prompt", Role: "user", Content: "Finalize."}},
+		ResponseFormat: &StructuredOutputFormat{
+			Name:   "combined-finalization-v1",
+			Strict: true,
+			Buckets: []BucketFormat{
+				{Name: "cognitive", RequiredFields: []string{"summary", "completion_signal"}, FieldTypes: map[string]string{"completion_signal": "boolean"}, Strict: true},
+				{Name: "workflow", RequiredFields: []string{"decision"}, Strict: true},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	schema := decoded["response_format"].(map[string]any)["json_schema"].(map[string]any)["schema"].(map[string]any)
+	required, ok := schema["required"].([]any)
+	if !ok || len(required) != 2 || required[0] != "cognitive" || required[1] != "workflow" {
+		t.Fatalf("outer required = %#v, want [cognitive workflow]", schema["required"])
+	}
+	if schema["additionalProperties"] != false {
+		t.Fatalf("outer schema = %#v, want additionalProperties=false", schema)
+	}
+	properties := schema["properties"].(map[string]any)
+	cognitive := properties["cognitive"].(map[string]any)
+	if _, ok := cognitive["properties"].(map[string]any)["summary"]; !ok {
+		t.Fatalf("cognitive bucket schema = %#v, want summary property", cognitive)
+	}
+	workflow := properties["workflow"].(map[string]any)
+	if _, ok := workflow["properties"].(map[string]any)["decision"]; !ok {
+		t.Fatalf("workflow bucket schema = %#v, want decision property", workflow)
+	}
+}
+
+func TestOpenAICompatibleProviderOmitsResponseFormatWhenBucketsEmpty(t *testing.T) {
+	p := &OpenAICompatibleProvider{}
+	body, err := p.buildHTTPBody(Request{
+		ModelRef:       "local-model",
+		Lines:          []RequestLine{{Kind: "prompt", Role: "user", Content: "Finalize."}},
+		ResponseFormat: &StructuredOutputFormat{Name: "empty-buckets", Buckets: []BucketFormat{{Name: "cognitive"}}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if _, ok := decoded["response_format"]; ok {
+		t.Fatalf("response_format = %#v, want omitted when no bucket has required fields", decoded["response_format"])
+	}
+}

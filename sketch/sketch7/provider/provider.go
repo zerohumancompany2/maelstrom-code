@@ -42,6 +42,21 @@ type StructuredOutputFormat struct {
 	// WrapBucket nests the schema under a single required top-level key
 	// (e.g. "cognitive"), matching finalization bucket validation.
 	WrapBucket string
+	// Buckets, when non-empty, supersedes the flat field spec and WrapBucket:
+	// each bucket's schema is nested under its named required top-level key,
+	// producing the combined wrapper shape
+	// {"cognitive": {...}, "workflow": {...}}.
+	Buckets []BucketFormat
+}
+
+// BucketFormat describes one named finalization bucket with its own contract.
+type BucketFormat struct {
+	Name           string
+	RequiredFields []string
+	OptionalFields []string
+	FieldTypes     map[string]string
+	FieldEnums     map[string][]string
+	Strict         bool
 }
 
 type Output interface{ output() }
