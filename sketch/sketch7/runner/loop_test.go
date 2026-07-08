@@ -1459,6 +1459,8 @@ func TestLoopRunFinalizesWorkflowOnlyWhenWorkflowBoundHit(t *testing.T) {
 	foundSessionExit := false
 	foundWorkflowExit := false
 	foundCompletion := false
+	foundSessionBoundReason := false
+	foundWorkflowBoundReason := false
 	for _, record := range sessionHistory.Records {
 		switch v := record.(type) {
 		case logs.OutputContractEvaluationRecord:
@@ -1468,6 +1470,9 @@ func TestLoopRunFinalizesWorkflowOnlyWhenWorkflowBoundHit(t *testing.T) {
 		case logs.StateExitRecord:
 			if v.Chart == "workflow" && v.StateName == "triaging" && v.Reason == "finalized" && v.CompletionAccepted {
 				foundSessionExit = true
+				if v.BoundReason == "workflow_max_inference_turns" {
+					foundSessionBoundReason = true
+				}
 			}
 		case logs.CompletionRecord:
 			if v.Completed && v.StopReason == "workflow_state_finalized" {
@@ -1478,10 +1483,13 @@ func TestLoopRunFinalizesWorkflowOnlyWhenWorkflowBoundHit(t *testing.T) {
 	for _, record := range workflowHistory.Records {
 		if v, ok := record.(logs.WorkflowStateExitRecord); ok && v.StateName == "triaging" && v.Reason == "finalized" && v.ByAgent == "builder" {
 			foundWorkflowExit = true
+			if v.BoundReason == "workflow_max_inference_turns" {
+				foundWorkflowBoundReason = true
+			}
 		}
 	}
-	if !foundWorkflowEval || !foundSessionExit || !foundWorkflowExit || !foundCompletion {
-		t.Fatalf("expected workflow eval/session exit/workflow exit/completion, session=%#v workflow=%#v", sessionHistory.Records, workflowHistory.Records)
+	if !foundWorkflowEval || !foundSessionExit || !foundWorkflowExit || !foundCompletion || !foundSessionBoundReason || !foundWorkflowBoundReason {
+		t.Fatalf("expected workflow eval/session exit/workflow exit/completion with BoundReason, session=%#v workflow=%#v", sessionHistory.Records, workflowHistory.Records)
 	}
 }
 
@@ -1505,6 +1513,7 @@ func TestLoopRunFinalizesCombinedCognitiveAndWorkflowBuckets(t *testing.T) {
 	}
 	validByChart := map[string]bool{}
 	exitByChart := map[string]bool{}
+	boundReasonByChart := map[string]string{}
 	foundCompletion := false
 	for _, record := range sessionHistory.Records {
 		switch v := record.(type) {
@@ -1515,6 +1524,9 @@ func TestLoopRunFinalizesCombinedCognitiveAndWorkflowBuckets(t *testing.T) {
 		case logs.StateExitRecord:
 			if v.Reason == "completed" || v.Reason == "finalized" {
 				exitByChart[v.Chart] = true
+				if v.BoundReason != "" {
+					boundReasonByChart[v.Chart] = v.BoundReason
+				}
 			}
 		case logs.CompletionRecord:
 			if v.Completed && v.StopReason == "combined_state_finalized" {
@@ -1524,6 +1536,11 @@ func TestLoopRunFinalizesCombinedCognitiveAndWorkflowBuckets(t *testing.T) {
 	}
 	if !validByChart["cognitive"] || !validByChart["workflow"] || !exitByChart["cognitive"] || !exitByChart["workflow"] || !foundCompletion {
 		t.Fatalf("expected valid evals/exits for both charts and combined completion, got %#v", sessionHistory.Records)
+	}
+	// Combined finalization produces a shared reason string containing both parts.
+	workflowBoundReason := boundReasonByChart["workflow"]
+	if workflowBoundReason == "" || !strings.Contains(workflowBoundReason, "cognitive_") || !strings.Contains(workflowBoundReason, "workflow_") {
+		t.Fatalf("workflow exit BoundReason = %q, want combined reason containing both cognitive_ and workflow_", workflowBoundReason)
 	}
 }
 
@@ -1623,6 +1640,16 @@ func TestLoopRunWorkflowFinalizationTransitionPersistsWorkflowHistory(t *testing
 	if !foundSessionEnterDone || !foundWorkflowExit || !foundWorkflowTransition {
 		t.Fatalf("expected workflow transition lifecycle records, session=%#v workflow=%#v", sessionHistory.Records, workflowHistory.Records)
 	}
+
+	// Verify finalization stats count the mid-session workflow transition.
+	stats := logs.ReduceSessionStats(sessionHistory)
+	if stats.Finalization.Completions < 1 {
+		t.Fatalf("Finalization.Completions = %d, want >= 1", stats.Finalization.Completions)
+	}
+	if stats.Finalization.ByBoundReason["workflow_max_inference_turns"] != 1 {
+		t.Fatalf("Finalization.ByBoundReason = %+v, want workflow_max_inference_turns=1", stats.Finalization.ByBoundReason)
+	}
+
 	path := filepath.Join(t.TempDir(), "state.json")
 	if err := logs.SaveState(path, sessionHistory, workflowHistory); err != nil {
 		t.Fatalf("SaveState: %v", err)

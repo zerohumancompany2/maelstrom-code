@@ -287,3 +287,89 @@ func TestReduceSessionStatsIgnoresCognitiveStateForFinalWorkflowState(t *testing
 		t.Fatalf("final workflow state = %q, want empty", stats.FinalWorkflowState)
 	}
 }
+
+// TestReduceSessionStatsCountsWorkflowBoundReason verifies that a workflow-chart
+// success exit with BoundReason is counted once in Finalization stats.
+func TestReduceSessionStatsCountsWorkflowBoundReason(t *testing.T) {
+	history := NewSessionHistory("session-workflow-bound")
+	history.Append(StateExitRecord{SessionBaseRecord: history.NextRecord("state_exit"), Chart: "workflow", StateName: "triaging", Reason: "finalized", BoundReason: "workflow_max_tool_calls"})
+
+	stats := ReduceSessionStats(history)
+	if stats.Finalization.Completions != 1 {
+		t.Fatalf("Finalization.Completions = %d, want 1", stats.Finalization.Completions)
+	}
+	if stats.Finalization.ByBoundReason["workflow_max_tool_calls"] != 1 {
+		t.Fatalf("Finalization.ByBoundReason = %+v, want workflow_max_tool_calls=1", stats.Finalization.ByBoundReason)
+	}
+}
+
+// TestReduceSessionStatsDedupesCombinedBoundReason verifies that combined
+// finalization (cognitive + workflow exits sharing the same BoundReason) is
+// counted only once via the workflow exit.
+func TestReduceSessionStatsDedupesCombinedBoundReason(t *testing.T) {
+	history := NewSessionHistory("session-combined-bound")
+	history.Append(StateExitRecord{SessionBaseRecord: history.NextRecord("state_exit"), Chart: "cognitive", StateName: "observe", Reason: "completed", BoundReason: "cognitive_max_inference_turns+workflow_max_inference_turns"})
+	history.Append(StateExitRecord{SessionBaseRecord: history.NextRecord("state_exit"), Chart: "workflow", StateName: "triaging", Reason: "finalized", BoundReason: "cognitive_max_inference_turns+workflow_max_inference_turns"})
+
+	stats := ReduceSessionStats(history)
+	if stats.Finalization.Completions != 1 {
+		t.Fatalf("Finalization.Completions = %d, want 1 (deduped)", stats.Finalization.Completions)
+	}
+	if stats.Finalization.ByBoundReason["cognitive_max_inference_turns+workflow_max_inference_turns"] != 1 {
+		t.Fatalf("Finalization.ByBoundReason = %+v, want combined reason=1", stats.Finalization.ByBoundReason)
+	}
+}
+
+// TestReduceSessionStatsCountsCognitiveOnlyBoundReason verifies that a
+// cognitive-only success exit with BoundReason is counted once.
+func TestReduceSessionStatsCountsCognitiveOnlyBoundReason(t *testing.T) {
+	history := NewSessionHistory("session-cognitive-bound")
+	history.Append(StateExitRecord{SessionBaseRecord: history.NextRecord("state_exit"), Chart: "cognitive", StateName: "observe", Reason: "completed", BoundReason: "cognitive_max_inference_turns"})
+
+	stats := ReduceSessionStats(history)
+	if stats.Finalization.Completions != 1 {
+		t.Fatalf("Finalization.Completions = %d, want 1", stats.Finalization.Completions)
+	}
+	if stats.Finalization.ByBoundReason["cognitive_max_inference_turns"] != 1 {
+		t.Fatalf("Finalization.ByBoundReason = %+v, want cognitive_max_inference_turns=1", stats.Finalization.ByBoundReason)
+	}
+}
+
+// TestReduceSessionStatsNoDoubleCountSessionEndingSuccess verifies that a
+// session-ending success (exit with BoundReason PLUS CompletionRecord) is
+// counted only once.
+func TestReduceSessionStatsNoDoubleCountSessionEndingSuccess(t *testing.T) {
+	history := NewSessionHistory("session-ending-success")
+	history.Append(StateExitRecord{SessionBaseRecord: history.NextRecord("state_exit"), Chart: "cognitive", StateName: "observe", Reason: "completed", BoundReason: "cognitive_max_inference_turns"})
+	history.Append(CompletionRecord{SessionBaseRecord: history.NextRecord("completion"), Completed: true, StopReason: "state_finalized", FinalizationReason: "cognitive_max_inference_turns"})
+
+	stats := ReduceSessionStats(history)
+	if stats.Finalization.Completions != 1 {
+		t.Fatalf("Finalization.Completions = %d, want 1 (not 2)", stats.Finalization.Completions)
+	}
+	if stats.Finalization.ByBoundReason["cognitive_max_inference_turns"] != 1 {
+		t.Fatalf("Finalization.ByBoundReason = %+v, want cognitive_max_inference_turns=1", stats.Finalization.ByBoundReason)
+	}
+	if stats.Finalization.ByStopReason["state_finalized"] != 1 {
+		t.Fatalf("Finalization.ByStopReason = %+v, want state_finalized=1", stats.Finalization.ByStopReason)
+	}
+}
+
+// TestReduceSessionStatsCountsFailureFromCompletionRecord verifies that a
+// finalization failure (no BoundReason exits, only CompletionRecord) is
+// counted correctly.
+func TestReduceSessionStatsCountsFailureFromCompletionRecord(t *testing.T) {
+	history := NewSessionHistory("session-finalization-failure")
+	history.Append(CompletionRecord{SessionBaseRecord: history.NextRecord("completion"), Completed: false, StopReason: "finalization_validation_failed", FinalizationReason: "workflow_max_inference_turns"})
+
+	stats := ReduceSessionStats(history)
+	if stats.Finalization.Failures != 1 {
+		t.Fatalf("Finalization.Failures = %d, want 1", stats.Finalization.Failures)
+	}
+	if stats.Finalization.ByBoundReason["workflow_max_inference_turns"] != 1 {
+		t.Fatalf("Finalization.ByBoundReason = %+v, want workflow_max_inference_turns=1", stats.Finalization.ByBoundReason)
+	}
+	if stats.Finalization.ByStopReason["finalization_validation_failed"] != 1 {
+		t.Fatalf("Finalization.ByStopReason = %+v, want finalization_validation_failed=1", stats.Finalization.ByStopReason)
+	}
+}

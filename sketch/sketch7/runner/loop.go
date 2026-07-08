@@ -131,16 +131,16 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 			if cognitiveOK && workflowOK {
 				workflowTransitioned := false
 				if finalizationMode.RequireWorkflow {
-					workflowTransitioned = appendWorkflowFinalization(sessionHistory, workflowHistory, workflowDef, view, workflowEval)
+					workflowTransitioned = appendWorkflowFinalization(sessionHistory, workflowHistory, workflowDef, view, workflowEval, finalizationMode.Reason)
 				}
 				if finalizationMode.RequireCognitive {
-					if transitioned := appendRuntimeCognitiveTransition(sessionHistory, agentDef.Cognitive, view.Cognitive, cognitiveEval); transitioned {
+					if transitioned := appendRuntimeCognitiveTransition(sessionHistory, agentDef.Cognitive, view.Cognitive, cognitiveEval, finalizationMode.Reason); transitioned {
 						// The cognitive chart moved on; the session continues in
 						// the next state. Any workflow finalization above is
 						// already durably recorded.
 						continue
 					}
-					sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: "completed", ParseRecordIDs: []string{cognitiveEval.RecordID()}, CompletionAccepted: true})
+					sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "cognitive", StateName: view.Cognitive.CurrentState, Reason: "completed", ParseRecordIDs: []string{cognitiveEval.RecordID()}, CompletionAccepted: true, BoundReason: finalizationMode.Reason})
 				} else if workflowTransitioned {
 					// Workflow-only finalization advanced the workflow chart;
 					// the session continues in the new workflow state with a
@@ -176,7 +176,7 @@ func (l Loop) Run(agent runtime.Agent, agentDef defs.AgentDefinition, workflowDe
 			sessionHistory.Append(logs.CompletionRecord{SessionBaseRecord: sessionHistory.NextRecord("completion"), Completed: true, StopReason: "stop_token", Iteration: iteration})
 			return nil
 		}
-		if transitioned := appendRuntimeCognitiveTransition(sessionHistory, agentDef.Cognitive, view.Cognitive, cognitiveEval); transitioned {
+		if transitioned := appendRuntimeCognitiveTransition(sessionHistory, agentDef.Cognitive, view.Cognitive, cognitiveEval, ""); transitioned {
 			continue
 		}
 		if hit, chart, reason := boundStopReason(view, sessionHistory); hit {
@@ -247,7 +247,7 @@ func shouldRetryInvalidStateOutput(view runtime.CognitiveView, history *logs.Ses
 	return true
 }
 
-func appendRuntimeCognitiveTransition(history *logs.SessionHistory, chart defs.StatechartDefinition, view runtime.CognitiveView, eval *logs.OutputContractEvaluationRecord) bool {
+func appendRuntimeCognitiveTransition(history *logs.SessionHistory, chart defs.StatechartDefinition, view runtime.CognitiveView, eval *logs.OutputContractEvaluationRecord, boundReason string) bool {
 	if history == nil || eval == nil || eval.ValidationStatus != "valid" || strings.TrimSpace(eval.TransitionTrigger) == "" {
 		return false
 	}
@@ -260,7 +260,7 @@ func appendRuntimeCognitiveTransition(history *logs.SessionHistory, chart defs.S
 	if err != nil {
 		return false
 	}
-	history.Append(logs.StateExitRecord{SessionBaseRecord: history.NextRecord("state_exit"), Chart: "cognitive", StateName: view.CurrentState, Reason: "transition", DerivedFromIDs: []string{eval.RecordID()}, ParseRecordIDs: []string{eval.RecordID()}, CompletionAccepted: true})
+	history.Append(logs.StateExitRecord{SessionBaseRecord: history.NextRecord("state_exit"), Chart: "cognitive", StateName: view.CurrentState, Reason: "transition", DerivedFromIDs: []string{eval.RecordID()}, ParseRecordIDs: []string{eval.RecordID()}, CompletionAccepted: true, BoundReason: boundReason})
 	history.Append(logs.CognitiveTransitionRecord{SessionBaseRecord: history.NextRecord("cognitive_transition"), FromState: view.CurrentState, ToState: next, Trigger: trigger, DerivedFromIDs: []string{eval.RecordID()}})
 	history.Append(logs.StateEnterRecord{SessionBaseRecord: history.NextRecord("state_enter"), Chart: "cognitive", StateName: next, DerivedFromIDs: []string{eval.RecordID()}})
 	return true
@@ -624,7 +624,7 @@ func finalizationResponseFormat(mode runtime.FinalizationMode, view runtime.Sess
 // the workflow lifecycle is reconstructable without the session log. A valid
 // transition trigger advances the workflow chart; otherwise the state exit is
 // recorded as finalized in place.
-func appendWorkflowFinalization(sessionHistory *logs.SessionHistory, workflowHistory *logs.WorkflowHistory, workflowDef *defs.WorkflowDefinition, view runtime.SessionView, eval *logs.OutputContractEvaluationRecord) bool {
+func appendWorkflowFinalization(sessionHistory *logs.SessionHistory, workflowHistory *logs.WorkflowHistory, workflowDef *defs.WorkflowDefinition, view runtime.SessionView, eval *logs.OutputContractEvaluationRecord, boundReason string) bool {
 	if view.Workflow == nil || eval == nil {
 		return false
 	}
@@ -641,9 +641,9 @@ func appendWorkflowFinalization(sessionHistory *logs.SessionHistory, workflowHis
 	if next != "" {
 		reason = "transition"
 	}
-	sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "workflow", StateName: current, Reason: reason, ParseRecordIDs: []string{eval.RecordID()}, CompletionAccepted: true})
+	sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "workflow", StateName: current, Reason: reason, ParseRecordIDs: []string{eval.RecordID()}, CompletionAccepted: true, BoundReason: boundReason})
 	if workflowHistory != nil {
-		workflowHistory.Append(logs.WorkflowStateExitRecord{WorkflowBaseRecord: workflowHistory.NextRecord("workflow_state_exit"), StateName: current, Reason: reason, ByAgent: view.Agent.Name, DerivedFromIDs: []string{eval.RecordID()}})
+		workflowHistory.Append(logs.WorkflowStateExitRecord{WorkflowBaseRecord: workflowHistory.NextRecord("workflow_state_exit"), StateName: current, Reason: reason, ByAgent: view.Agent.Name, DerivedFromIDs: []string{eval.RecordID()}, BoundReason: boundReason})
 		if next != "" {
 			workflowHistory.Append(logs.WorkflowTransitionRecord{WorkflowBaseRecord: workflowHistory.NextRecord("workflow_transition"), FromState: current, ToState: next, Trigger: trigger, DerivedFromIDs: []string{eval.RecordID()}})
 		}

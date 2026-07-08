@@ -167,6 +167,9 @@ type StateExitRecord struct {
 	DerivedFromIDs     []string
 	ParseRecordIDs     []string
 	CompletionAccepted bool
+	// BoundReason is the bound(s) that forced the finalization that produced
+	// this exit; empty for non-finalization exits.
+	BoundReason string `json:"bound_reason,omitempty"`
 }
 
 type SessionHistory struct {

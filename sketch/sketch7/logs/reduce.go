@@ -244,10 +244,30 @@ func ReduceSessionStats(history *SessionHistory) SessionStats {
 			if v.Chart == "workflow" {
 				stats.FinalWorkflowState = v.StateName
 			}
+			// Count success finalization events from exits with BoundReason.
+			// Dedupe rule: workflow exits count; cognitive exits count only if
+			// their BoundReason doesn't contain "workflow_" (combined events are
+			// counted at the workflow exit and skipped at the cognitive exit).
+			if v.BoundReason != "" {
+				if v.Chart == "workflow" || (v.Chart == "cognitive" && !strings.Contains(v.BoundReason, "workflow_")) {
+					stats.Finalization.Completions++
+					incrementIfPresent(stats.Finalization.ByBoundReason, v.BoundReason)
+				}
+			}
 		case *StateExitRecord:
 			incrementIfPresent(stats.StateExitReasons, v.Reason)
 			if v.Chart == "workflow" {
 				stats.FinalWorkflowState = v.StateName
+			}
+			// Count success finalization events from exits with BoundReason.
+			// Dedupe rule: workflow exits count; cognitive exits count only if
+			// their BoundReason doesn't contain "workflow_" (combined events are
+			// counted at the workflow exit and skipped at the cognitive exit).
+			if v.BoundReason != "" {
+				if v.Chart == "workflow" || (v.Chart == "cognitive" && !strings.Contains(v.BoundReason, "workflow_")) {
+					stats.Finalization.Completions++
+					incrementIfPresent(stats.Finalization.ByBoundReason, v.BoundReason)
+				}
 			}
 		case StateEnterRecord:
 			if v.Chart == "workflow" {
@@ -460,17 +480,20 @@ func computeRecoveredRetries(history *SessionHistory, index map[string]SessionRe
 	return recovered
 }
 
+// reduceCompletion handles CompletionRecords. For finalization stop reasons,
+// ByStopReason is always incremented (tracking how sessions ended). Failures
+// (!Completed) increment Failures and ByBoundReason. Successes are NOT counted
+// here — they're counted at their StateExitRecords with BoundReason, avoiding
+// double-count for session-ending successes that append both exit and completion.
 func reduceCompletion(stats SessionStats, record CompletionRecord, latestCognitiveState, latestWorkflowState string) SessionStats {
 	stats.Completion.Total++
 	incrementIfPresent(stats.StopReasons, record.StopReason)
 	if isFinalizationStopReason(record.StopReason) {
-		if record.Completed {
-			stats.Finalization.Completions++
-		} else {
-			stats.Finalization.Failures++
-		}
 		incrementIfPresent(stats.Finalization.ByStopReason, record.StopReason)
-		incrementIfPresent(stats.Finalization.ByBoundReason, record.FinalizationReason)
+		if !record.Completed {
+			stats.Finalization.Failures++
+			incrementIfPresent(stats.Finalization.ByBoundReason, record.FinalizationReason)
+		}
 	}
 	stats.Completion.LatestCompleted = record.Completed
 	stats.Completion.LatestStopReason = record.StopReason

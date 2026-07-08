@@ -45,6 +45,9 @@ type WorkflowStateExitRecord struct {
 	Reason         string
 	ByAgent        string
 	DerivedFromIDs []string
+	// BoundReason is the bound(s) that forced the finalization that produced
+	// this exit; empty for non-finalization exits.
+	BoundReason string `json:"bound_reason,omitempty"`
 }
 
 type WorkflowHistory struct {
