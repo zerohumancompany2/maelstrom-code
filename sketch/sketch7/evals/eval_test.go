@@ -159,3 +159,100 @@ func TestEvaluateSessionStatsChecksFinalOutputContains(t *testing.T) {
 		t.Fatalf("expected fail on missing term: %+v", result)
 	}
 }
+
+func TestEvaluateSessionStatsChecksInvalidWorkflowOutputs(t *testing.T) {
+	stats := logs.SessionStats{Output: logs.OutputStats{ByChart: map[string]logs.BucketOutputStats{"workflow": {Invalid: 2}}}}
+	eval := SessionEvalCase{MaxInvalidWorkflowOutputs: 2}
+	if result := EvaluateSessionStats(stats, eval); !result.Passed {
+		t.Fatalf("expected pass at threshold: %+v", result)
+	}
+	eval.MaxInvalidWorkflowOutputs = 1
+	result := EvaluateSessionStats(stats, eval)
+	if result.Passed {
+		t.Fatalf("expected fail over threshold: %+v", result)
+	}
+}
+
+func TestEvaluateSessionStatsChecksValidWorkflowOutputs(t *testing.T) {
+	stats := logs.SessionStats{Output: logs.OutputStats{ByChart: map[string]logs.BucketOutputStats{"workflow": {Valid: 3}}}}
+	eval := SessionEvalCase{MinValidWorkflowOutputs: 3}
+	if result := EvaluateSessionStats(stats, eval); !result.Passed {
+		t.Fatalf("expected pass at threshold: %+v", result)
+	}
+	eval.MinValidWorkflowOutputs = 4
+	result := EvaluateSessionStats(stats, eval)
+	if result.Passed {
+		t.Fatalf("expected fail below threshold: %+v", result)
+	}
+	// Check not added when zero
+	eval = SessionEvalCase{MinValidWorkflowOutputs: 0}
+	result = EvaluateSessionStats(stats, eval)
+	for _, check := range result.Checks {
+		if check.Name == "valid_workflow_outputs" {
+			t.Fatalf("valid_workflow_outputs check should not be added when MinValidWorkflowOutputs is zero")
+		}
+	}
+}
+
+func TestEvaluateSessionStatsChecksStopReason(t *testing.T) {
+	stats := logs.SessionStats{Completion: logs.CompletionStats{LatestStopReason: "state_finalized"}}
+	eval := SessionEvalCase{RequiredStopReason: "state_finalized"}
+	if result := EvaluateSessionStats(stats, eval); !result.Passed {
+		t.Fatalf("expected pass on matching stop reason: %+v", result)
+	}
+	eval.RequiredStopReason = "loop_guard"
+	result := EvaluateSessionStats(stats, eval)
+	if result.Passed {
+		t.Fatalf("expected fail on mismatched stop reason: %+v", result)
+	}
+	// Check not added when empty
+	eval = SessionEvalCase{RequiredStopReason: ""}
+	result = EvaluateSessionStats(stats, eval)
+	for _, check := range result.Checks {
+		if check.Name == "stop_reason" {
+			t.Fatalf("stop_reason check should not be added when RequiredStopReason is empty")
+		}
+	}
+}
+
+func TestEvaluateSessionStatsChecksFinalizationReason(t *testing.T) {
+	stats := logs.SessionStats{Finalization: logs.FinalizationStats{ByBoundReason: map[string]int{"cognitive_max_turns": 1}}}
+	eval := SessionEvalCase{RequiredFinalizationReason: "cognitive_max_turns"}
+	if result := EvaluateSessionStats(stats, eval); !result.Passed {
+		t.Fatalf("expected pass on matching finalization reason: %+v", result)
+	}
+	eval.RequiredFinalizationReason = "workflow_max_turns"
+	result := EvaluateSessionStats(stats, eval)
+	if result.Passed {
+		t.Fatalf("expected fail on missing finalization reason: %+v", result)
+	}
+	// Check not added when empty
+	eval = SessionEvalCase{RequiredFinalizationReason: ""}
+	result = EvaluateSessionStats(stats, eval)
+	for _, check := range result.Checks {
+		if check.Name == "finalization_reason" {
+			t.Fatalf("finalization_reason check should not be added when RequiredFinalizationReason is empty")
+		}
+	}
+}
+
+func TestEvaluateSessionStatsChecksFinalWorkflowState(t *testing.T) {
+	stats := logs.SessionStats{FinalWorkflowState: "done"}
+	eval := SessionEvalCase{RequiredFinalWorkflowState: "done"}
+	if result := EvaluateSessionStats(stats, eval); !result.Passed {
+		t.Fatalf("expected pass on matching final workflow state: %+v", result)
+	}
+	eval.RequiredFinalWorkflowState = "triaging"
+	result := EvaluateSessionStats(stats, eval)
+	if result.Passed {
+		t.Fatalf("expected fail on mismatched final workflow state: %+v", result)
+	}
+	// Check not added when empty
+	eval = SessionEvalCase{RequiredFinalWorkflowState: ""}
+	result = EvaluateSessionStats(stats, eval)
+	for _, check := range result.Checks {
+		if check.Name == "final_workflow_state" {
+			t.Fatalf("final_workflow_state check should not be added when RequiredFinalWorkflowState is empty")
+		}
+	}
+}

@@ -8,25 +8,26 @@ import (
 )
 
 type SessionStats struct {
-	SessionID        string                   `json:"session_id"`
-	AgentID          string                   `json:"agent_id"`
-	RecordCounts     RecordCounts             `json:"record_counts"`
-	Output           OutputStats              `json:"output"`
-	Finalization     FinalizationStats        `json:"finalization"`
-	Tools            ToolStats                `json:"tools"`
-	Retry            RetryStats               `json:"retry"`
-	Completion       CompletionStats          `json:"completion"`
-	ByTool           map[string]PerToolStats  `json:"by_tool"`
-	ByState          map[string]PerStateStats `json:"by_state"`
-	ModelRefs        map[string]int           `json:"model_refs"`
-	ProviderRefs     map[string]int           `json:"provider_refs"`
-	StopReasons      map[string]int           `json:"stop_reasons"`
-	StateExitReasons map[string]int           `json:"state_exit_reasons"`
-	RetryByReason    map[string]int           `json:"retry_by_reason"`
-	OutputStatuses   map[string]int           `json:"output_statuses"`
-	ParseStatuses    map[string]int           `json:"parse_statuses"`
-	FilesRead        map[string]int           `json:"files_read"`
-	FinalAssistant   string                   `json:"final_assistant,omitempty"`
+	SessionID          string                   `json:"session_id"`
+	AgentID            string                   `json:"agent_id"`
+	RecordCounts       RecordCounts             `json:"record_counts"`
+	Output             OutputStats              `json:"output"`
+	Finalization       FinalizationStats        `json:"finalization"`
+	Tools              ToolStats                `json:"tools"`
+	Retry              RetryStats               `json:"retry"`
+	Completion         CompletionStats          `json:"completion"`
+	ByTool             map[string]PerToolStats  `json:"by_tool"`
+	ByState            map[string]PerStateStats `json:"by_state"`
+	ModelRefs          map[string]int           `json:"model_refs"`
+	ProviderRefs       map[string]int           `json:"provider_refs"`
+	StopReasons        map[string]int           `json:"stop_reasons"`
+	StateExitReasons   map[string]int           `json:"state_exit_reasons"`
+	RetryByReason      map[string]int           `json:"retry_by_reason"`
+	OutputStatuses     map[string]int           `json:"output_statuses"`
+	ParseStatuses      map[string]int           `json:"parse_statuses"`
+	FilesRead          map[string]int           `json:"files_read"`
+	FinalAssistant     string                   `json:"final_assistant,omitempty"`
+	FinalWorkflowState string                   `json:"final_workflow_state,omitempty"`
 }
 
 // finalAssistantLimit caps the retained final assistant content so session
@@ -240,8 +241,22 @@ func ReduceSessionStats(history *SessionHistory) SessionStats {
 			stats = reduceCompletion(stats, *v, latestCognitiveState, latestWorkflowState)
 		case StateExitRecord:
 			incrementIfPresent(stats.StateExitReasons, v.Reason)
+			if v.Chart == "workflow" {
+				stats.FinalWorkflowState = v.StateName
+			}
 		case *StateExitRecord:
 			incrementIfPresent(stats.StateExitReasons, v.Reason)
+			if v.Chart == "workflow" {
+				stats.FinalWorkflowState = v.StateName
+			}
+		case StateEnterRecord:
+			if v.Chart == "workflow" {
+				stats.FinalWorkflowState = v.StateName
+			}
+		case *StateEnterRecord:
+			if v.Chart == "workflow" {
+				stats.FinalWorkflowState = v.StateName
+			}
 		case CognitiveTransitionRecord:
 			latestCognitiveState = v.ToState
 		case *CognitiveTransitionRecord:

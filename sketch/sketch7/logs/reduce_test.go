@@ -255,3 +255,35 @@ func TestReduceSessionStatsExposesBucketOutputAndFinalizationReasons(t *testing.
 		t.Fatalf("finalization bound reasons = %+v, want combined reason", stats.Finalization.ByBoundReason)
 	}
 }
+
+func TestReduceSessionStatsTracksFinalWorkflowStateFromExit(t *testing.T) {
+	history := NewSessionHistory("session-workflow-exit")
+	history.Append(StateExitRecord{SessionBaseRecord: history.NextRecord("state_exit"), Chart: "workflow", StateName: "triaging", Reason: "finalized"})
+
+	stats := ReduceSessionStats(history)
+	if stats.FinalWorkflowState != "triaging" {
+		t.Fatalf("final workflow state = %q, want triaging", stats.FinalWorkflowState)
+	}
+}
+
+func TestReduceSessionStatsTracksFinalWorkflowStateFromTransition(t *testing.T) {
+	history := NewSessionHistory("session-workflow-transition")
+	history.Append(StateExitRecord{SessionBaseRecord: history.NextRecord("state_exit"), Chart: "workflow", StateName: "triaging", Reason: "transition"})
+	history.Append(StateEnterRecord{SessionBaseRecord: history.NextRecord("state_enter"), Chart: "workflow", StateName: "done"})
+
+	stats := ReduceSessionStats(history)
+	if stats.FinalWorkflowState != "done" {
+		t.Fatalf("final workflow state = %q, want done", stats.FinalWorkflowState)
+	}
+}
+
+func TestReduceSessionStatsIgnoresCognitiveStateForFinalWorkflowState(t *testing.T) {
+	history := NewSessionHistory("session-cognitive-only")
+	history.Append(StateEnterRecord{SessionBaseRecord: history.NextRecord("state_enter"), Chart: "cognitive", StateName: "observe"})
+	history.Append(StateExitRecord{SessionBaseRecord: history.NextRecord("state_exit"), Chart: "cognitive", StateName: "observe", Reason: "completed"})
+
+	stats := ReduceSessionStats(history)
+	if stats.FinalWorkflowState != "" {
+		t.Fatalf("final workflow state = %q, want empty", stats.FinalWorkflowState)
+	}
+}

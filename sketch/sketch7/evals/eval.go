@@ -10,18 +10,23 @@ import (
 )
 
 type SessionEvalCase struct {
-	Name                     string   `yaml:"name" json:"name"`
-	RequireCompleted         bool     `yaml:"require_completed" json:"require_completed"`
-	MaxInvalidOutputs        int      `yaml:"max_invalid_outputs" json:"max_invalid_outputs"`
-	MaxInvalidToolProposals  int      `yaml:"max_invalid_tool_proposals" json:"max_invalid_tool_proposals"`
-	MaxToolExecutionFailures int      `yaml:"max_tool_execution_failures" json:"max_tool_execution_failures"`
-	MaxUnrecoveredRetries    int      `yaml:"max_unrecovered_retries" json:"max_unrecovered_retries"`
-	MaxMissingRequired       int      `yaml:"max_missing_required" json:"max_missing_required"`
-	MaxWrongState            int      `yaml:"max_wrong_state" json:"max_wrong_state"`
-	MaxCompletionFailureRate float64  `yaml:"max_completion_failure_rate" json:"max_completion_failure_rate"`
-	RequiredFilesRead        []string `yaml:"required_files_read" json:"required_files_read,omitempty"`
-	MaxFilesRead             int      `yaml:"max_files_read" json:"max_files_read,omitempty"`
-	FinalOutputContains      []string `yaml:"final_output_contains" json:"final_output_contains,omitempty"`
+	Name                       string   `yaml:"name" json:"name"`
+	RequireCompleted           bool     `yaml:"require_completed" json:"require_completed"`
+	MaxInvalidOutputs          int      `yaml:"max_invalid_outputs" json:"max_invalid_outputs"`
+	MaxInvalidToolProposals    int      `yaml:"max_invalid_tool_proposals" json:"max_invalid_tool_proposals"`
+	MaxToolExecutionFailures   int      `yaml:"max_tool_execution_failures" json:"max_tool_execution_failures"`
+	MaxUnrecoveredRetries      int      `yaml:"max_unrecovered_retries" json:"max_unrecovered_retries"`
+	MaxMissingRequired         int      `yaml:"max_missing_required" json:"max_missing_required"`
+	MaxWrongState              int      `yaml:"max_wrong_state" json:"max_wrong_state"`
+	MaxCompletionFailureRate   float64  `yaml:"max_completion_failure_rate" json:"max_completion_failure_rate"`
+	RequiredFilesRead          []string `yaml:"required_files_read" json:"required_files_read,omitempty"`
+	MaxFilesRead               int      `yaml:"max_files_read" json:"max_files_read,omitempty"`
+	FinalOutputContains        []string `yaml:"final_output_contains" json:"final_output_contains,omitempty"`
+	MaxInvalidWorkflowOutputs  int      `yaml:"max_invalid_workflow_outputs" json:"max_invalid_workflow_outputs"`
+	MinValidWorkflowOutputs    int      `yaml:"min_valid_workflow_outputs" json:"min_valid_workflow_outputs,omitempty"`
+	RequiredStopReason         string   `yaml:"required_stop_reason" json:"required_stop_reason,omitempty"`
+	RequiredFinalizationReason string   `yaml:"required_finalization_reason" json:"required_finalization_reason,omitempty"`
+	RequiredFinalWorkflowState string   `yaml:"required_final_workflow_state" json:"required_final_workflow_state,omitempty"`
 }
 
 type AggregateEvalCase struct {
@@ -90,6 +95,20 @@ func EvaluateSessionStats(stats logs.SessionStats, eval SessionEvalCase) EvalRes
 			actual += " (missing: " + strings.Join(missing, ", ") + ")"
 		}
 		result.addCheck("final_output_contains", len(missing) == 0, fmt.Sprintf("%d/%d terms", total, total), actual)
+	}
+	workflowOutput := stats.Output.ByChart["workflow"]
+	result.addCheck("invalid_workflow_outputs", workflowOutput.Invalid <= eval.MaxInvalidWorkflowOutputs, lessOrEqual(eval.MaxInvalidWorkflowOutputs), intString(workflowOutput.Invalid))
+	if eval.MinValidWorkflowOutputs > 0 {
+		result.addCheck("valid_workflow_outputs", workflowOutput.Valid >= eval.MinValidWorkflowOutputs, greaterOrEqual(eval.MinValidWorkflowOutputs), intString(workflowOutput.Valid))
+	}
+	if strings.TrimSpace(eval.RequiredStopReason) != "" {
+		result.addCheck("stop_reason", stats.Completion.LatestStopReason == eval.RequiredStopReason, eval.RequiredStopReason, stats.Completion.LatestStopReason)
+	}
+	if strings.TrimSpace(eval.RequiredFinalizationReason) != "" {
+		result.addCheck("finalization_reason", stats.Finalization.ByBoundReason[eval.RequiredFinalizationReason] > 0, eval.RequiredFinalizationReason, fmt.Sprintf("%v", stats.Finalization.ByBoundReason))
+	}
+	if strings.TrimSpace(eval.RequiredFinalWorkflowState) != "" {
+		result.addCheck("final_workflow_state", stats.FinalWorkflowState == eval.RequiredFinalWorkflowState, eval.RequiredFinalWorkflowState, stats.FinalWorkflowState)
 	}
 	return result
 }
@@ -163,6 +182,10 @@ func floatString(value float64) string {
 
 func lessOrEqual(value int) string {
 	return "<= " + intString(value)
+}
+
+func greaterOrEqual(value int) string {
+	return ">= " + intString(value)
 }
 
 func greaterOrEqualFloat(value float64) string {
