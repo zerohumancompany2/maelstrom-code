@@ -48,6 +48,16 @@ type WorkflowView struct {
 	Outputs         defs.StateOutputContract
 	Completion      defs.StateCompletionContract
 	Bounds          defs.StateBoundsContract
+	Artifacts       []WorkflowArtifactView
+}
+
+// WorkflowArtifactView is the reduced projection of a WorkflowArtifactRecord:
+// the validated workflow-bucket output a prior agent finalized for a state.
+type WorkflowArtifactView struct {
+	StateName  string
+	SchemaName string
+	ByAgent    string
+	Content    string
 }
 
 type BindingView struct {

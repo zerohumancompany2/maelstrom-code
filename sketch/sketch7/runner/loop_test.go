@@ -1625,6 +1625,7 @@ func TestLoopRunWorkflowFinalizationTransitionPersistsWorkflowHistory(t *testing
 	}
 	foundWorkflowExit := false
 	foundWorkflowTransition := false
+	foundWorkflowArtifact := false
 	for _, record := range workflowHistory.Records {
 		switch v := record.(type) {
 		case logs.WorkflowStateExitRecord:
@@ -1635,10 +1636,14 @@ func TestLoopRunWorkflowFinalizationTransitionPersistsWorkflowHistory(t *testing
 			if v.FromState == "triaging" && v.ToState == "done" && v.Trigger == "finish" {
 				foundWorkflowTransition = true
 			}
+		case logs.WorkflowArtifactRecord:
+			if v.StateName == "triaging" && v.SchemaName == "triage_v1" && v.ByAgent == "builder" && strings.Contains(v.Content, `"decision":"resolved"`) {
+				foundWorkflowArtifact = true
+			}
 		}
 	}
-	if !foundSessionEnterDone || !foundWorkflowExit || !foundWorkflowTransition {
-		t.Fatalf("expected workflow transition lifecycle records, session=%#v workflow=%#v", sessionHistory.Records, workflowHistory.Records)
+	if !foundSessionEnterDone || !foundWorkflowExit || !foundWorkflowTransition || !foundWorkflowArtifact {
+		t.Fatalf("expected workflow transition lifecycle records + artifact, session=%#v workflow=%#v", sessionHistory.Records, workflowHistory.Records)
 	}
 
 	// Verify finalization stats count the mid-session workflow transition.
@@ -1660,6 +1665,7 @@ func TestLoopRunWorkflowFinalizationTransitionPersistsWorkflowHistory(t *testing
 	}
 	loadedExit := false
 	loadedTransition := false
+	loadedArtifact := false
 	for _, record := range loadedWorkflow.Records {
 		switch v := record.(type) {
 		case *logs.WorkflowStateExitRecord:
@@ -1670,9 +1676,13 @@ func TestLoopRunWorkflowFinalizationTransitionPersistsWorkflowHistory(t *testing
 			if v.FromState == "triaging" && v.ToState == "done" && v.Trigger == "finish" {
 				loadedTransition = true
 			}
+		case *logs.WorkflowArtifactRecord:
+			if v.StateName == "triaging" && v.SchemaName == "triage_v1" && v.ByAgent == "builder" && strings.Contains(v.Content, `"decision":"resolved"`) {
+				loadedArtifact = true
+			}
 		}
 	}
-	if !loadedExit || !loadedTransition {
-		t.Fatalf("loaded workflow records = %#v, want persisted exit and transition", loadedWorkflow.Records)
+	if !loadedExit || !loadedTransition || !loadedArtifact {
+		t.Fatalf("loaded workflow records = %#v, want persisted exit, transition, and artifact", loadedWorkflow.Records)
 	}
 }

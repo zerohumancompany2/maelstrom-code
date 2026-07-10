@@ -81,6 +81,9 @@ func TestBuildSectionsStateTaskRendersTaskFacingGuidance(t *testing.T) {
 			Outputs:         defs.StateOutputContract{SchemaName: "workflow_step_v1", RequiredFields: []string{"artifact_status"}},
 			Completion:      defs.StateCompletionContract{SuccessWhen: []string{"artifact_status == ready"}},
 			AllowedTriggers: []string{"orientation_complete"},
+			Artifacts: []runtime.WorkflowArtifactView{
+				{StateName: "intake", SchemaName: "intake_v1", ByAgent: "builder", Content: `{"summary":"ok"}`},
+			},
 		},
 	}
 	sections := BuildSections(agentDef, session, history, RepoContextOptions{})
@@ -112,9 +115,45 @@ func TestBuildSectionsStateTaskRendersTaskFacingGuidance(t *testing.T) {
 	if !strings.Contains(content, "Task bounds: max inference turns=3; max tool calls=6; max finalization retries=1") {
 		t.Fatalf("content = %q, want cognitive bounds", content)
 	}
+	if !strings.Contains(content, "Workflow artifacts from prior stages:") {
+		t.Fatalf("content = %q, want workflow artifacts header", content)
+	}
+	if !strings.Contains(content, "[<intake/intake_v1> by builder]") {
+		t.Fatalf("content = %q, want artifact attribution", content)
+	}
+	if !strings.Contains(content, `{"summary":"ok"}`) {
+		t.Fatalf("content = %q, want artifact content", content)
+	}
 	for _, forbidden := range []string{"Cognitive mode", "Workflow directive", "Suggested next transitions"} {
 		if strings.Contains(content, forbidden) {
 			t.Fatalf("content = %q, must not contain old state-machine phrase %q", content, forbidden)
 		}
+	}
+}
+
+func TestBuildSectionsStateTaskCapsWorkflowArtifactBudget(t *testing.T) {
+	agentDef := defs.AgentDefinition{Context: defs.ContextDefinition{Projections: []defs.ProjectionDefinition{{Type: "state_task"}}}}
+	history := logs.NewSessionHistory("session-artifact-budget-001")
+	big := strings.Repeat("x", 1600)
+	artifacts := []runtime.WorkflowArtifactView{}
+	for _, state := range []string{"stage-a", "stage-b", "stage-c", "stage-d", "stage-e"} {
+		artifacts = append(artifacts, runtime.WorkflowArtifactView{StateName: state, SchemaName: state + "_v1", ByAgent: "builder", Content: big})
+	}
+	session := runtime.SessionView{
+		Workflow: &runtime.WorkflowView{WorkflowID: "wf-budget", CurrentState: "stage-f", Artifacts: artifacts},
+	}
+	sections := BuildSections(agentDef, session, history, RepoContextOptions{})
+	if len(sections) != 1 {
+		t.Fatalf("got %d sections, want 1", len(sections))
+	}
+	content := sections[0].Content
+	if strings.Contains(content, "stage-a/") {
+		t.Fatalf("oldest artifact should be dropped by the total budget, got %d chars", len(content))
+	}
+	if !strings.Contains(content, "stage-e/") {
+		t.Fatal("most recent artifact must survive the total budget")
+	}
+	if len([]rune(content)) > 8000 {
+		t.Fatalf("state_task content = %d runes, want artifact block capped", len([]rune(content)))
 	}
 }

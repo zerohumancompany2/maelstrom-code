@@ -105,6 +105,28 @@ func formatStateTask(session runtime.SessionView, history *logs.SessionHistory) 
 		if bounds := formatBounds("Workflow bounds", wf.Bounds); bounds != "" {
 			parts = append(parts, bounds)
 		}
+		if len(wf.Artifacts) > 0 {
+			// Cap the total artifact block so a long workflow cannot bloat
+			// the sticky state_task section: keep the most recent artifacts
+			// that fit the rune budget, rendered in original stage order.
+			const perArtifactLimit = 1500
+			const totalArtifactBudget = 6000
+			rendered := make([]string, len(wf.Artifacts))
+			budget := totalArtifactBudget
+			start := len(wf.Artifacts)
+			for i := len(wf.Artifacts) - 1; i >= 0; i-- {
+				a := wf.Artifacts[i]
+				part := fmt.Sprintf("[<%s/%s> by %s] %s", a.StateName, a.SchemaName, a.ByAgent, truncateContent(a.Content, perArtifactLimit))
+				cost := len([]rune(part))
+				if cost > budget && start < len(wf.Artifacts) {
+					break
+				}
+				rendered[i] = part
+				budget -= cost
+				start = i
+			}
+			parts = append(parts, fmt.Sprintf("Workflow artifacts from prior stages: %s", strings.Join(rendered[start:], " ")))
+		}
 	}
 
 	// Input expectations from cognitive state
@@ -180,4 +202,16 @@ func containsString(items []string, target string) bool {
 		}
 	}
 	return false
+}
+
+// truncateContent caps content to limit runes, appending "..." when truncated.
+func truncateContent(content string, limit int) string {
+	if limit <= 0 {
+		return content
+	}
+	runes := []rune(content)
+	if len(runes) <= limit {
+		return content
+	}
+	return string(runes[:limit]) + "..."
 }

@@ -64,7 +64,35 @@ func ReduceWorkflowState(history *logs.WorkflowHistory, def defs.WorkflowDefinit
 	view.VisibleTools, view.EnabledTools = toolPolicyForState(def.Statechart, view.CurrentState)
 	view.AllowedTriggers = allowedTriggersForState(def.Statechart, view.CurrentState)
 	view.Inputs, view.Outputs, view.Completion, view.Bounds = stateContractsForState(def.Statechart, view.CurrentState)
+	view.Artifacts = reduceWorkflowArtifacts(history.Records)
 	return view
+}
+
+// reduceWorkflowArtifacts collects WorkflowArtifactRecords in forward order,
+// keeping only the latest artifact per StateName while preserving the order in
+// which states first produced artifacts.
+func reduceWorkflowArtifacts(records []logs.WorkflowRecord) []WorkflowArtifactView {
+	artifactByState := map[string]int{}
+	var artifacts []WorkflowArtifactView
+	for _, record := range records {
+		var ar logs.WorkflowArtifactRecord
+		switch v := record.(type) {
+		case logs.WorkflowArtifactRecord:
+			ar = v
+		case *logs.WorkflowArtifactRecord:
+			ar = *v
+		default:
+			continue
+		}
+		view := WorkflowArtifactView{StateName: ar.StateName, SchemaName: ar.SchemaName, ByAgent: ar.ByAgent, Content: ar.Content}
+		if idx, ok := artifactByState[ar.StateName]; ok {
+			artifacts[idx] = view
+		} else {
+			artifactByState[ar.StateName] = len(artifacts)
+			artifacts = append(artifacts, view)
+		}
+	}
+	return artifacts
 }
 
 func ReduceBindingState(history *logs.SessionHistory) BindingView {

@@ -15,6 +15,7 @@ func TestSaveAndLoadStateRoundTrips(t *testing.T) {
 	session.NextBundleID()
 	workflow := NewWorkflowHistory("workflow-persist-001")
 	workflow.Append(WorkflowTransitionRecord{WorkflowBaseRecord: workflow.NextRecord("workflow_transition"), FromState: "planning", ToState: "implementing", Trigger: "start"})
+	workflow.Append(WorkflowArtifactRecord{WorkflowBaseRecord: workflow.NextRecord("workflow_artifact"), StateName: "planning", SchemaName: "plan_v1", ByAgent: "builder", Content: `{"plan":"ship"}`, DerivedFromIDs: []string{"src-001"}})
 
 	path := filepath.Join(t.TempDir(), "state.json")
 	if err := SaveState(path, session, workflow); err != nil {
@@ -39,8 +40,15 @@ func TestSaveAndLoadStateRoundTrips(t *testing.T) {
 	if exit, ok := loadedSession.Records[3].(*StateExitRecord); !ok || !exit.CompletionAccepted {
 		t.Fatalf("record[3] = %#v, want accepted *StateExitRecord", loadedSession.Records[3])
 	}
-	if loadedWorkflow == nil || loadedWorkflow.WorkflowID != workflow.WorkflowID || len(loadedWorkflow.Records) != 1 {
+	if loadedWorkflow == nil || loadedWorkflow.WorkflowID != workflow.WorkflowID || len(loadedWorkflow.Records) != 2 {
 		t.Fatalf("loaded workflow mismatch: %+v", loadedWorkflow)
+	}
+	artifact, ok := loadedWorkflow.Records[1].(*WorkflowArtifactRecord)
+	if !ok {
+		t.Fatalf("record[1] = %T, want *WorkflowArtifactRecord", loadedWorkflow.Records[1])
+	}
+	if artifact.StateName != "planning" || artifact.SchemaName != "plan_v1" || artifact.ByAgent != "builder" || artifact.Content != `{"plan":"ship"}` || len(artifact.DerivedFromIDs) != 1 || artifact.DerivedFromIDs[0] != "src-001" {
+		t.Fatalf("loaded artifact = %#v, want round-tripped WorkflowArtifactRecord", artifact)
 	}
 }
 

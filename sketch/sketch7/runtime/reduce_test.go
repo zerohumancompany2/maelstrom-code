@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/comalice/inference_sketch/sketch/sketch7/defs"
@@ -159,6 +160,43 @@ func TestReduceWorkflowStateUsesLatestTransitionAndBindingRef(t *testing.T) {
 	}
 	if len(view.VisibleTools) != 2 {
 		t.Fatalf("VisibleTools = %v, want 2 tools", view.VisibleTools)
+	}
+}
+
+func TestReduceWorkflowStateArtifactsKeepsLatestPerStatePreservingFirstOrder(t *testing.T) {
+	history := logs.NewWorkflowHistory("workflow-artifacts")
+	history.Append(logs.WorkflowArtifactRecord{
+		WorkflowBaseRecord: history.NextRecord("workflow_artifact"),
+		StateName:          "intake",
+		SchemaName:         "intake_v1",
+		ByAgent:            "builder",
+		Content:            `{"summary":"old"}`,
+	})
+	history.Append(logs.WorkflowArtifactRecord{
+		WorkflowBaseRecord: history.NextRecord("workflow_artifact"),
+		StateName:          "inspecting",
+		SchemaName:         "inspect_v1",
+		ByAgent:            "builder",
+		Content:            `{"findings":"none"}`,
+	})
+	history.Append(logs.WorkflowArtifactRecord{
+		WorkflowBaseRecord: history.NextRecord("workflow_artifact"),
+		StateName:          "intake",
+		SchemaName:         "intake_v1",
+		ByAgent:            "reviewer",
+		Content:            `{"summary":"new"}`,
+	})
+	def := defs.WorkflowDefinition{Statechart: defs.StatechartDefinition{InitialState: "intake"}}
+
+	view := ReduceWorkflowState(history, def, "builder")
+	if len(view.Artifacts) != 2 {
+		t.Fatalf("Artifacts = %+v, want 2 entries", view.Artifacts)
+	}
+	if view.Artifacts[0].StateName != "intake" || view.Artifacts[0].ByAgent != "reviewer" || !strings.Contains(view.Artifacts[0].Content, `"summary":"new"`) {
+		t.Fatalf("Artifacts[0] = %+v, want intake with newer content by reviewer", view.Artifacts[0])
+	}
+	if view.Artifacts[1].StateName != "inspecting" || !strings.Contains(view.Artifacts[1].Content, `"findings":"none"`) {
+		t.Fatalf("Artifacts[1] = %+v, want inspecting", view.Artifacts[1])
 	}
 }
 

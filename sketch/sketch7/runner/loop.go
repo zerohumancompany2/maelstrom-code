@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -643,6 +644,9 @@ func appendWorkflowFinalization(sessionHistory *logs.SessionHistory, workflowHis
 	}
 	sessionHistory.Append(logs.StateExitRecord{SessionBaseRecord: sessionHistory.NextRecord("state_exit"), Chart: "workflow", StateName: current, Reason: reason, ParseRecordIDs: []string{eval.RecordID()}, CompletionAccepted: true, BoundReason: boundReason})
 	if workflowHistory != nil {
+		if content, ok := recoverWorkflowArtifactContent(sessionHistory, eval); ok {
+			workflowHistory.Append(logs.WorkflowArtifactRecord{WorkflowBaseRecord: workflowHistory.NextRecord("workflow_artifact"), StateName: current, SchemaName: eval.SchemaName, ByAgent: view.Agent.Name, Content: content, DerivedFromIDs: []string{eval.RecordID()}})
+		}
 		workflowHistory.Append(logs.WorkflowStateExitRecord{WorkflowBaseRecord: workflowHistory.NextRecord("workflow_state_exit"), StateName: current, Reason: reason, ByAgent: view.Agent.Name, DerivedFromIDs: []string{eval.RecordID()}, BoundReason: boundReason})
 		if next != "" {
 			workflowHistory.Append(logs.WorkflowTransitionRecord{WorkflowBaseRecord: workflowHistory.NextRecord("workflow_transition"), FromState: current, ToState: next, Trigger: trigger, DerivedFromIDs: []string{eval.RecordID()}})
@@ -653,6 +657,52 @@ func appendWorkflowFinalization(sessionHistory *logs.SessionHistory, workflowHis
 		return true
 	}
 	return false
+}
+
+// recoverWorkflowArtifactContent extracts the validated "workflow" bucket JSON
+// from the assistant record referenced by eval.SourceRecordID. It returns
+// ok=false (silently) when the source record cannot be located or the payload
+// does not carry a valid workflow bucket; callers continue recording the
+// state-exit/transition lifecycle records regardless.
+func recoverWorkflowArtifactContent(sessionHistory *logs.SessionHistory, eval *logs.OutputContractEvaluationRecord) (string, bool) {
+	if sessionHistory == nil || eval == nil || eval.SourceRecordID == "" {
+		return "", false
+	}
+	var content string
+	found := false
+	for _, record := range sessionHistory.Records {
+		switch v := record.(type) {
+		case logs.AssistantMessageRecord:
+			if v.RecordID() == eval.SourceRecordID {
+				content = v.Content
+				found = true
+			}
+		case *logs.AssistantMessageRecord:
+			if v.RecordID() == eval.SourceRecordID {
+				content = v.Content
+				found = true
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		return "", false
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return "", false
+	}
+	bucket, status := extractBucket(payload, "workflow")
+	if status != "" || bucket == nil {
+		return "", false
+	}
+	raw, err := json.Marshal(bucket)
+	if err != nil {
+		return "", false
+	}
+	return string(raw), true
 }
 
 func latestStateStartMillis(history *logs.SessionHistory, chart string) int64 {

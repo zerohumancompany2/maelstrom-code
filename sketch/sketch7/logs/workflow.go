@@ -50,6 +50,18 @@ type WorkflowStateExitRecord struct {
 	BoundReason string `json:"bound_reason,omitempty"`
 }
 
+// WorkflowArtifactRecord stores a finalized workflow-state output artifact in
+// the workflow's durable history. It is the substance of cross-session
+// handoff: a later agent binding to this workflow acts on these artifacts.
+type WorkflowArtifactRecord struct {
+	WorkflowBaseRecord
+	StateName      string
+	SchemaName     string
+	ByAgent        string
+	Content        string // the validated workflow bucket JSON
+	DerivedFromIDs []string
+}
+
 type WorkflowHistory struct {
 	WorkflowID string
 	Records    []WorkflowRecord
