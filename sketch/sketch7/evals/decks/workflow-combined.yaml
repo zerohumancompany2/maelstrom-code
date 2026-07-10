@@ -1,0 +1,29 @@
+name: workflow-combined
+description: >
+  Tier 1 supplement: force a live combined cognitive+workflow finalization by
+  colliding ooda-reader cognitive turn bounds (observe 2 + orient 2) with the
+  issue-triage-tight workflow turn bound (4). Run from the repo root.
+models:
+  - sketch/sketch7/models/openrouter-qwen3-coder-30b.yaml
+  - sketch/sketch7/models/openrouter-minimax-m2.5.yaml
+  - sketch/sketch7/models/openrouter-glm-4.7-flash.yaml
+timeoutSeconds: 300
+cases:
+  - id: combined-bug-report
+    agent: sketch/sketch7/agents/ooda-reader.yaml
+    workflow: sketch/sketch7/workflows/issue-triage-tight.yaml
+    repeats: 2
+    prompt: >
+      Bug report: when a combined finalization turn fails validation, retry
+      counting may be wrong — retries might be charged against only one
+      chart's window instead of both the cognitive and workflow windows.
+      Triage this report against the sketch/sketch7 runner and runtime
+      packages: decide whether it is a real bug, cite the evidence you
+      inspected, and name the suspect files.
+    eval:
+      min_valid_workflow_outputs: 1
+      max_invalid_workflow_outputs: 2
+      required_final_workflow_state: done
+      max_invalid_tool_proposals: 2
+      max_tool_execution_failures: 1
+      max_unrecovered_retries: 3
