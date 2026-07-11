@@ -404,6 +404,76 @@ func TestRunDeckStagedCaseSkipsAfterFailure(t *testing.T) {
 	}
 }
 
+func TestLoadWorkflowTeamPlanningDeck(t *testing.T) {
+	deck, err := LoadTaskDeck(filepath.Join("decks", "workflow-team-planning.yaml"))
+	if err != nil {
+		t.Fatalf("LoadTaskDeck: %v", err)
+	}
+	if len(deck.Models) != 3 {
+		t.Fatalf("models = %d, want 3", len(deck.Models))
+	}
+	if len(deck.Cases) != 1 {
+		t.Fatalf("cases = %d, want 1", len(deck.Cases))
+	}
+	tc := deck.Cases[0]
+	if tc.WorkflowPath != "sketch/sketch7/workflows/change-planning.yaml" {
+		t.Fatalf("workflow = %q", tc.WorkflowPath)
+	}
+	if tc.TimeoutSeconds != 360 {
+		t.Fatalf("timeout = %d, want inherited 360", tc.TimeoutSeconds)
+	}
+	// The relay contract: stage IDs mirror the workflow states and each
+	// stage's eval pins the state the NEXT stage should bind into.
+	wantStages := []struct{ id, nextState string }{
+		{"intake", "inspecting"},
+		{"inspecting", "planning"},
+		{"planning", "reviewing"},
+		{"reviewing", "done"},
+	}
+	if len(tc.Stages) != len(wantStages) {
+		t.Fatalf("stages = %d, want %d", len(tc.Stages), len(wantStages))
+	}
+	for i, want := range wantStages {
+		stage := tc.Stages[i]
+		if stage.ID != want.id {
+			t.Fatalf("stage %d id = %q, want %q", i, stage.ID, want.id)
+		}
+		if stage.Eval.RequiredFinalWorkflowState != want.nextState {
+			t.Fatalf("stage %q required final state = %q, want %q", stage.ID, stage.Eval.RequiredFinalWorkflowState, want.nextState)
+		}
+		if stage.Eval.MinValidWorkflowOutputs != 1 {
+			t.Fatalf("stage %q min valid workflow outputs = %d, want 1", stage.ID, stage.Eval.MinValidWorkflowOutputs)
+		}
+		if !stage.Eval.RequireCompleted {
+			t.Fatalf("stage %q must require completion", stage.ID)
+		}
+		if strings.TrimSpace(stage.Prompt) == "" {
+			t.Fatalf("stage %q missing prompt", stage.ID)
+		}
+		if _, err := os.Stat(filepath.Join("..", "..", "..", stage.Agent)); err != nil {
+			t.Fatalf("stage %q agent path: %v", stage.ID, err)
+		}
+	}
+	// Only the intake prompt carries the change request; later stages must
+	// recover it from workflow artifacts (the handoff under test).
+	if !strings.Contains(tc.Stages[0].Prompt, "Change request:") {
+		t.Fatalf("intake prompt missing change request")
+	}
+	for _, stage := range tc.Stages[1:] {
+		if strings.Contains(stage.Prompt, "Change request:") {
+			t.Fatalf("stage %q prompt restates the change request; it must rely on workflow artifacts", stage.ID)
+		}
+		if !strings.Contains(stage.Prompt, "workflow artifacts") {
+			t.Fatalf("stage %q prompt should direct the agent to the workflow artifacts", stage.ID)
+		}
+	}
+	for _, pathValue := range append([]string{tc.WorkflowPath}, deck.Models...) {
+		if _, err := os.Stat(filepath.Join("..", "..", "..", pathValue)); err != nil {
+			t.Fatalf("deck path: %v", err)
+		}
+	}
+}
+
 func TestSummarizeRunsGroupsByStage(t *testing.T) {
 	records := []RunRecord{
 		{CaseID: "c1", StageID: "s1", Passed: true, RunID: "r1"},
