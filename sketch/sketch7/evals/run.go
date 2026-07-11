@@ -202,8 +202,29 @@ func runIDFor(deck TaskDeck, tc TaskCase, agentPath, modelPath string, repeat in
 func runCase(deck TaskDeck, tc TaskCase, agentPath, modelPath string, repeat int, config RunnerConfig) RunRecord {
 	runID := runIDFor(deck, tc, agentPath, modelPath, repeat)
 	sessionID := fmt.Sprintf("eval-%s", runID)
-	record, _ := executeSession(deck, tc, runID, sessionID, tc.Prompt, agentPath, modelPath, tc.Eval, repeat, config, nil)
+	rootDir, cleanup, err := resolveCaseRoot(tc, config)
+	if err != nil {
+		return RunRecord{RunID: runID, DeckName: deck.Name, CaseID: tc.ID, RepeatIndex: repeat, ModelLabel: modelLabel(modelPath), SessionID: sessionID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano), FinishedAt: time.Now().UTC().Format(time.RFC3339Nano), Error: err.Error()}
+	}
+	defer cleanup()
+	record, _ := executeSession(deck, tc, runID, sessionID, tc.Prompt, agentPath, modelPath, tc.Eval, repeat, config, rootDir, nil)
 	return record
+}
+
+// resolveCaseRoot returns the directory tools should be rooted at for a case:
+// the runner root for read-only cases, a disposable sandbox copy for
+// sandboxed (write-enabled) cases. The cleanup func is a no-op for read-only
+// cases and deletes the sandbox otherwise; callers must run it only after all
+// eval checks (including file-content checks) have been evaluated.
+func resolveCaseRoot(tc TaskCase, config RunnerConfig) (string, func(), error) {
+	if !tc.Sandbox {
+		return config.RootDir, func() {}, nil
+	}
+	dir, cleanup, err := createSandbox(config.RootDir, tc.SandboxExcludes)
+	if err != nil {
+		return "", nil, fmt.Errorf("sandbox: %w", err)
+	}
+	return dir, cleanup, nil
 }
 
 // executeSession runs one (agent, prompt) session against a workflow. When
@@ -214,7 +235,9 @@ func runCase(deck TaskDeck, tc TaskCase, agentPath, modelPath string, repeat int
 // records for shared workflows (staged cases); executeSession never unbinds.
 // The returned *logs.SessionHistory is non-nil when a workflow was bound,
 // letting the caller append unbind records on the session side.
-func executeSession(deck TaskDeck, tc TaskCase, runID, sessionID, promptText, agentPath, modelPath string, eval SessionEvalCase, repeat int, config RunnerConfig, sharedWorkflow *logs.WorkflowHistory) (RunRecord, *logs.SessionHistory) {
+// rootDir is the effective tool root: the runner root for read-only cases,
+// the disposable sandbox for sandboxed cases; the caller owns its lifecycle.
+func executeSession(deck TaskDeck, tc TaskCase, runID, sessionID, promptText, agentPath, modelPath string, eval SessionEvalCase, repeat int, config RunnerConfig, rootDir string, sharedWorkflow *logs.WorkflowHistory) (RunRecord, *logs.SessionHistory) {
 	started := time.Now().UTC()
 	record := RunRecord{RunID: runID, DeckName: deck.Name, CaseID: tc.ID, RepeatIndex: repeat, ModelLabel: modelLabel(modelPath), SessionID: sessionID, StartedAt: started.Format(time.RFC3339Nano)}
 	memory := catalog.NewMemory()
@@ -256,7 +279,7 @@ func executeSession(deck TaskDeck, tc TaskCase, runID, sessionID, promptText, ag
 	if hasWorkflow {
 		workflowDefPtr = &workflowDef
 	}
-	toolRegistry := buildEvalToolRegistry(config.RootDir, agentDef, workflowDefPtr)
+	toolRegistry := buildEvalToolRegistry(rootDir, tc, agentDef, workflowDefPtr)
 	hydratedAgent, err := compile.HydrateAgent(agentDef, modelDef, toolRegistry)
 	if err != nil {
 		record.Error = err.Error()
@@ -289,6 +312,7 @@ func executeSession(deck TaskDeck, tc TaskCase, runID, sessionID, promptText, ag
 	}
 	record.Stats = logs.ReduceSessionStats(sessionHistory)
 	record.Eval = EvaluateSessionStats(record.Stats, eval)
+	EvaluateFileArtifacts(rootDir, eval, &record.Eval)
 	record.Passed = record.Error == "" && record.Eval.Passed
 	record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	var sessionHist *logs.SessionHistory
@@ -343,12 +367,37 @@ func runStagedCase(deck TaskDeck, tc TaskCase, modelPath string, repeat int, con
 		}
 	}
 	sharedWorkflow := logs.NewWorkflowHistory(fmt.Sprintf("eval-%s:%s:%d:%s", sanitizeID(deck.Name), sanitizeID(tc.ID), repeat, workflowID))
-	failed := false
+	// One root spans every stage of this (model, repeat): for sandboxed
+	// cases each stage session sees the file edits of the stages before it,
+	// mirroring how the shared workflow instance carries their artifacts.
+	rootDir, cleanup, rootErr := resolveCaseRoot(tc, config)
+	if rootErr == nil {
+		defer cleanup()
+	}
+	failed := rootErr != nil
 	for i, stage := range tc.Stages {
 		stageIndex := i + 1
 		effectiveModel := effectiveModelPath(stage.Model, modelPath)
 		runID := stageRunIDFor(deck, tc, stage, effectiveModel, repeat, stageIndex)
 		sessionID := "eval-" + runID
+		if rootErr != nil {
+			now := time.Now().UTC().Format(time.RFC3339Nano)
+			records = append(records, RunRecord{
+				RunID:       runID,
+				DeckName:    deck.Name,
+				CaseID:      tc.ID,
+				RepeatIndex: repeat,
+				ModelLabel:  modelLabel(effectiveModel),
+				SessionID:   sessionID,
+				StageID:     stage.ID,
+				StageIndex:  stageIndex,
+				StartedAt:   now,
+				FinishedAt:  now,
+				Passed:      false,
+				Error:       rootErr.Error(),
+			})
+			continue
+		}
 		if failed {
 			records = append(records, RunRecord{
 				RunID:       runID,
@@ -364,7 +413,7 @@ func runStagedCase(deck TaskDeck, tc TaskCase, modelPath string, repeat int, con
 			})
 			continue
 		}
-		record, stageSession := executeSession(deck, tc, runID, sessionID, stage.Prompt, stage.Agent, effectiveModel, stage.Eval, repeat, config, sharedWorkflow)
+		record, stageSession := executeSession(deck, tc, runID, sessionID, stage.Prompt, stage.Agent, effectiveModel, stage.Eval, repeat, config, rootDir, sharedWorkflow)
 		record.StageID = stage.ID
 		record.StageIndex = stageIndex
 		// Unbind on both sides after the stage session ends (evals/ owns the
@@ -394,12 +443,17 @@ func runStagedCase(deck TaskDeck, tc TaskCase, modelPath string, repeat int, con
 	return records
 }
 
-func buildEvalToolRegistry(root string, agentDef defs.AgentDefinition, workflowDef *defs.WorkflowDefinition) tools.Registry {
+// buildEvalToolRegistry assembles the tool surface for one case. Write-capable
+// tools (replace_text, run_command) are only present for sandboxed cases, so
+// a read-only deck cannot mutate the runner root no matter what the agent or
+// workflow tool lists claim; run_command additionally runs in its
+// allowlisted safe tier when the case sets a command allowlist.
+func buildEvalToolRegistry(root string, tc TaskCase, agentDef defs.AgentDefinition, workflowDef *defs.WorkflowDefinition) tools.Registry {
 	transitionTool := tools.TransitionTool{AgentChart: statecharts.Compile("agent", agentDef.Cognitive)}
 	if workflowDef != nil {
 		transitionTool.WorkflowChart = statecharts.Compile("workflow", workflowDef.Statechart)
 	}
-	return tools.NewRegistry(
+	registryTools := []tools.Tool{
 		tools.BindingTool{},
 		tools.UnbindTool{},
 		tools.InterruptTool{},
@@ -407,13 +461,18 @@ func buildEvalToolRegistry(root string, agentDef defs.AgentDefinition, workflowD
 		transitionTool,
 		tools.ListFilesTool{RootDir: root},
 		tools.ReadFileTool{RootDir: root},
-		tools.ReplaceTextTool{RootDir: root},
-		tools.RunCommandTool{RootDir: root},
 		tools.SearchFilesTool{RootDir: root},
 		tools.GetFileSkeletonTool{RootDir: root},
 		tools.FindReferencesTool{RootDir: root},
 		tools.ReadSymbolTool{RootDir: root},
-	)
+	}
+	if tc.Sandbox {
+		registryTools = append(registryTools,
+			tools.ReplaceTextTool{RootDir: root},
+			tools.RunCommandTool{RootDir: root, Allowlist: tc.CommandAllowlist},
+		)
+	}
+	return tools.NewRegistry(registryTools...)
 }
 
 func firstModel(memory *catalog.Memory) (defs.ModelDefinition, bool) {

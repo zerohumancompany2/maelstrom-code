@@ -2,7 +2,9 @@ package evals
 
 import (
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -27,6 +29,17 @@ type SessionEvalCase struct {
 	RequiredStopReason         string   `yaml:"required_stop_reason" json:"required_stop_reason,omitempty"`
 	RequiredFinalizationReason string   `yaml:"required_finalization_reason" json:"required_finalization_reason,omitempty"`
 	RequiredFinalWorkflowState string   `yaml:"required_final_workflow_state" json:"required_final_workflow_state,omitempty"`
+	// RequiredFileContains checks are evaluated against the case's effective
+	// tool root AFTER the session ends (the sandbox for sandboxed cases), so
+	// write-enabled microtasks can assert the edit actually landed on disk.
+	RequiredFileContains []FileContainsCheck `yaml:"required_file_contains" json:"required_file_contains,omitempty"`
+}
+
+// FileContainsCheck asserts that a file under the case root exists and
+// contains every listed term (case-insensitive).
+type FileContainsCheck struct {
+	Path  string   `yaml:"path" json:"path"`
+	Terms []string `yaml:"terms" json:"terms"`
 }
 
 type AggregateEvalCase struct {
@@ -111,6 +124,27 @@ func EvaluateSessionStats(stats logs.SessionStats, eval SessionEvalCase) EvalRes
 		result.addCheck("final_workflow_state", stats.FinalWorkflowState == eval.RequiredFinalWorkflowState, eval.RequiredFinalWorkflowState, stats.FinalWorkflowState)
 	}
 	return result
+}
+
+// EvaluateFileArtifacts appends file-content checks to an existing eval
+// result. It runs against the case's effective tool root after the session
+// ends and before any sandbox teardown; failed checks flip result.Passed.
+func EvaluateFileArtifacts(root string, eval SessionEvalCase, result *EvalResult) {
+	for _, check := range eval.RequiredFileContains {
+		name := "file_contains:" + check.Path
+		raw, err := os.ReadFile(filepath.Join(root, check.Path))
+		if err != nil {
+			result.addCheck(name, false, fmt.Sprintf("%d/%d terms", len(check.Terms), len(check.Terms)), "file not readable: "+err.Error())
+			continue
+		}
+		missing := missingTerms(string(raw), check.Terms)
+		total := len(check.Terms)
+		actual := fmt.Sprintf("%d/%d terms", total-len(missing), total)
+		if len(missing) > 0 {
+			actual += " (missing: " + strings.Join(missing, ", ") + ")"
+		}
+		result.addCheck(name, len(missing) == 0, fmt.Sprintf("%d/%d terms", total, total), actual)
+	}
 }
 
 // missingFiles returns the required paths not present in the files-read map.

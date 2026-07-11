@@ -321,9 +321,45 @@ func TestBuildToolRegistryIncludesTransitionState(t *testing.T) {
 			States:       []defs.StateDefinition{{Name: "observe"}, {Name: "act"}},
 			Transitions:  []defs.TransitionDefinition{{Trigger: "go", From: "observe", To: "act"}},
 		},
-	}, nil)
+	}, nil, false)
 	if err := registry.MustHave("transition_state"); err != nil {
 		t.Fatalf("expected transition_state in registry: %v", err)
+	}
+}
+
+func TestBuildToolRegistryGatesWriteTools(t *testing.T) {
+	agentDef := defs.AgentDefinition{Cognitive: defs.StatechartDefinition{InitialState: "observe", States: []defs.StateDefinition{{Name: "observe"}}}}
+	readOnly := buildToolRegistry(agentDef, nil, false)
+	for _, name := range []string{"replace_text", "run_command"} {
+		if err := readOnly.MustHave(name); err == nil {
+			t.Fatalf("read-only baseline registry must not contain %s", name)
+		}
+	}
+	if err := readOnly.MustHave("read_file"); err != nil {
+		t.Fatalf("read tools missing from baseline: %v", err)
+	}
+	writes := buildToolRegistry(agentDef, nil, true)
+	for _, name := range []string{"replace_text", "run_command"} {
+		if err := writes.MustHave(name); err != nil {
+			t.Fatalf("--enable-writes registry missing %s: %v", name, err)
+		}
+	}
+}
+
+func TestParseArgsEnableWrites(t *testing.T) {
+	parsed, err := parseArgs([]string{"--prompt", "p", "--enable-writes"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if !parsed.enableWrites {
+		t.Fatal("enableWrites not parsed")
+	}
+	parsed, err = parseArgs([]string{"--prompt", "p"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if parsed.enableWrites {
+		t.Fatal("enableWrites must default to false")
 	}
 }
 

@@ -27,6 +27,16 @@ type TaskCase struct {
 	TimeoutSeconds int             `yaml:"timeoutSeconds,omitempty" json:"timeout_seconds,omitempty"`
 	Eval           SessionEvalCase `yaml:"eval" json:"eval"`
 	Stages         []TaskStage     `yaml:"stages,omitempty" json:"stages,omitempty"`
+	// Sandbox opts the case into the write-enabled tier: the run executes
+	// against a disposable copy of the runner root, and only sandboxed cases
+	// get write-capable tools (replace_text, run_command). For staged cases
+	// one sandbox spans all stages of a (model, repeat) so later stages see
+	// earlier stages' edits.
+	Sandbox         bool     `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
+	SandboxExcludes []string `yaml:"sandboxExcludes,omitempty" json:"sandbox_excludes,omitempty"`
+	// CommandAllowlist, when set, runs run_command in its safe tier: no
+	// shell, prefix-matched commands only, workdir clamped to the sandbox.
+	CommandAllowlist []string `yaml:"commandAllowlist,omitempty" json:"command_allowlist,omitempty"`
 }
 
 // TaskStage describes one ordered (agent, prompt) stage of a staged case. The
@@ -99,6 +109,9 @@ func LoadTaskDeck(path string) (TaskDeck, error) {
 			if strings.TrimSpace(tc.AgentPath) == "" && len(deck.Agents) == 0 {
 				return TaskDeck{}, fmt.Errorf("case %q missing agent path", tc.ID)
 			}
+		}
+		if len(tc.CommandAllowlist) > 0 && !tc.Sandbox {
+			return TaskDeck{}, fmt.Errorf("case %q sets a command allowlist without sandbox: true; run_command is only available to sandboxed cases", tc.ID)
 		}
 		if tc.Repeats <= 0 {
 			tc.Repeats = 1

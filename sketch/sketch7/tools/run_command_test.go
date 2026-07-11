@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -73,5 +74,90 @@ func TestRunCommandToolTimeoutIsError(t *testing.T) {
 	}
 	if !strings.Contains(result.DisplayContent, "Timed out: true") {
 		t.Fatalf("DisplayContent = %q, want timeout marker", result.DisplayContent)
+	}
+}
+
+func runCommandRequest(callID, command string, extra map[string]string) ExecutionRequest {
+	args := map[string]string{"command": command}
+	for key, value := range extra {
+		args[key] = value
+	}
+	return ExecutionRequest{
+		History: logs.NewSessionHistory("session-" + callID),
+		Call:    provider.ToolRequestOutput{Call: provider.ToolCall{CallID: callID, ToolName: "run_command", Arguments: args}},
+	}
+}
+
+func TestRunCommandToolAllowlistPermitsPrefixedCommand(t *testing.T) {
+	tool := RunCommandTool{RootDir: t.TempDir(), DefaultTimeout: 5 * time.Second, Allowlist: []string{"printf"}}
+	result, err := tool.Execute(runCommandRequest("call-allow-001", "printf hello", nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got %+v", result)
+	}
+	if !strings.Contains(result.DisplayContent, "hello") {
+		t.Fatalf("DisplayContent = %q, want command output", result.DisplayContent)
+	}
+}
+
+func TestRunCommandToolAllowlistRejectsUnlistedCommand(t *testing.T) {
+	tool := RunCommandTool{RootDir: t.TempDir(), DefaultTimeout: 5 * time.Second, Allowlist: []string{"go test", "go build"}}
+	for _, command := range []string{
+		"rm -rf /",
+		"go testfoo", // token-boundary: prefix must match whole tokens
+		"gofmt -l .", // "go" prefix does not cover gofmt
+		"bash -c 'go test'",
+	} {
+		result, err := tool.Execute(runCommandRequest("call-allow-002", command, nil))
+		if err != nil {
+			t.Fatalf("unexpected error for %q: %v", command, err)
+		}
+		if !result.IsError || !strings.Contains(result.DisplayContent, "allowlist") {
+			t.Fatalf("command %q: expected allowlist rejection, got %+v", command, result)
+		}
+	}
+}
+
+func TestRunCommandToolAllowlistExecutesWithoutShell(t *testing.T) {
+	tempDir := t.TempDir()
+	tool := RunCommandTool{RootDir: tempDir, DefaultTimeout: 5 * time.Second, Allowlist: []string{"printf"}}
+	// Under bash -lc this would chain into touch; without a shell the
+	// metacharacters are inert literal arguments to printf.
+	result, err := tool.Execute(runCommandRequest("call-allow-003", "printf hi; touch "+tempDir+"/pwned", nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got %+v", result)
+	}
+	if _, statErr := os.Stat(tempDir + "/pwned"); statErr == nil {
+		t.Fatal("shell chaining executed: pwned file exists")
+	}
+}
+
+func TestRunCommandToolAllowlistClampsWorkdir(t *testing.T) {
+	tool := RunCommandTool{RootDir: t.TempDir(), DefaultTimeout: 5 * time.Second, Allowlist: []string{"printf"}}
+	for _, workdir := range []string{"/", "../..", "/tmp"} {
+		result, err := tool.Execute(runCommandRequest("call-allow-004", "printf hi", map[string]string{"workdir": workdir}))
+		if err != nil {
+			t.Fatalf("unexpected error for workdir %q: %v", workdir, err)
+		}
+		if !result.IsError || !strings.Contains(result.DisplayContent, "escapes the tool root") {
+			t.Fatalf("workdir %q: expected escape rejection, got %+v", workdir, result)
+		}
+	}
+}
+
+func TestRunCommandToolAllowlistDefinitionNamesPrefixes(t *testing.T) {
+	tool := RunCommandTool{RootDir: t.TempDir(), Allowlist: []string{"go test", "go build"}}
+	def := tool.Definition()
+	if !strings.Contains(def.Description, "go test") || !strings.Contains(def.Description, "go build") {
+		t.Fatalf("Description = %q, want allowlist prefixes surfaced", def.Description)
+	}
+	plain := RunCommandTool{RootDir: t.TempDir()}
+	if strings.Contains(plain.Definition().Description, "allowed") {
+		t.Fatalf("plain description should not mention allowlist: %q", plain.Definition().Description)
 	}
 }

@@ -139,7 +139,7 @@ func run() error {
 	if hasWorkflow {
 		workflowDefPtr = &workflowDef
 	}
-	toolRegistry := buildToolRegistry(agentDef, workflowDefPtr)
+	toolRegistry := buildToolRegistry(agentDef, workflowDefPtr, args.enableWrites)
 	hydratedAgent, err := compile.HydrateAgent(agentDef, modelDef, toolRegistry)
 	if err != nil {
 		return err
@@ -222,6 +222,7 @@ type cliArgs struct {
 	evalDeckPath     string
 	evalOutputPath   string
 	evalSummaryPath  string
+	enableWrites     bool
 }
 
 func parseArgs(args []string) (cliArgs, error) {
@@ -318,6 +319,8 @@ func parseArgs(args []string) (cliArgs, error) {
 				return cliArgs{}, fmt.Errorf("missing value for --eval-summary")
 			}
 			parsed.evalSummaryPath = args[i]
+		case "--enable-writes":
+			parsed.enableWrites = true
 		default:
 			return cliArgs{}, fmt.Errorf("unknown argument %q", args[i])
 		}
@@ -918,13 +921,18 @@ func providerFromEnv() (*provider.OpenAICompatibleProvider, error) {
 	}, nil
 }
 
-func buildToolRegistry(agentDef defs.AgentDefinition, workflowDef *defs.WorkflowDefinition) tools.Registry {
+// buildToolRegistry assembles the CLI tool surface. The baseline is
+// read-only: write-capable tools (replace_text, run_command) run against the
+// LIVE working directory with no sandbox, so they require the explicit
+// --enable-writes opt-in until gated write runs are the norm (completion plan
+// Phase 4). Sandboxed write work should go through the eval harness instead.
+func buildToolRegistry(agentDef defs.AgentDefinition, workflowDef *defs.WorkflowDefinition, enableWrites bool) tools.Registry {
 	root, _ := os.Getwd()
 	transitionTool := tools.TransitionTool{AgentChart: statecharts.Compile("agent", agentDef.Cognitive)}
 	if workflowDef != nil {
 		transitionTool.WorkflowChart = statecharts.Compile("workflow", workflowDef.Statechart)
 	}
-	return tools.NewRegistry(
+	registryTools := []tools.Tool{
 		tools.BindingTool{},
 		tools.UnbindTool{},
 		tools.InterruptTool{},
@@ -932,13 +940,18 @@ func buildToolRegistry(agentDef defs.AgentDefinition, workflowDef *defs.Workflow
 		transitionTool,
 		tools.ListFilesTool{RootDir: root},
 		tools.ReadFileTool{RootDir: root},
-		tools.ReplaceTextTool{RootDir: root},
-		tools.RunCommandTool{RootDir: root},
 		tools.GetFileSkeletonTool{RootDir: root},
 		tools.SearchFilesTool{RootDir: root},
 		tools.ReadSymbolTool{RootDir: root},
 		tools.FindReferencesTool{RootDir: root},
-	)
+	}
+	if enableWrites {
+		registryTools = append(registryTools,
+			tools.ReplaceTextTool{RootDir: root},
+			tools.RunCommandTool{RootDir: root},
+		)
+	}
+	return tools.NewRegistry(registryTools...)
 }
 
 func firstModel(memory *catalog.Memory) (defs.ModelDefinition, bool) {
