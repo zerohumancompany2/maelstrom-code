@@ -26,6 +26,20 @@ type TaskCase struct {
 	Repeats        int             `yaml:"repeats,omitempty" json:"repeats,omitempty"`
 	TimeoutSeconds int             `yaml:"timeoutSeconds,omitempty" json:"timeout_seconds,omitempty"`
 	Eval           SessionEvalCase `yaml:"eval" json:"eval"`
+	Stages         []TaskStage     `yaml:"stages,omitempty" json:"stages,omitempty"`
+}
+
+// TaskStage describes one ordered (agent, prompt) stage of a staged case. The
+// harness runs stages sequentially against ONE persisted workflow instance:
+// stage N+1's agent binds to the workflow containing stage N's finalized
+// artifacts. The runtime renders those artifacts into the task frame; the
+// evals/ layer owns only the sequencing (bind/unbind records and stage run IDs).
+type TaskStage struct {
+	ID     string          `yaml:"id" json:"id"`
+	Agent  string          `yaml:"agent" json:"agent"`
+	Prompt string          `yaml:"prompt" json:"prompt"`
+	Model  string          `yaml:"model,omitempty" json:"model,omitempty"`
+	Eval   SessionEvalCase `yaml:"eval" json:"eval"`
 }
 
 func LoadTaskDeck(path string) (TaskDeck, error) {
@@ -44,23 +58,56 @@ func LoadTaskDeck(path string) (TaskDeck, error) {
 		return TaskDeck{}, fmt.Errorf("deck must contain at least one case")
 	}
 	for i := range deck.Cases {
-		if strings.TrimSpace(deck.Cases[i].ID) == "" {
+		tc := &deck.Cases[i]
+		if strings.TrimSpace(tc.ID) == "" {
 			return TaskDeck{}, fmt.Errorf("case %d missing id", i)
 		}
-		if strings.TrimSpace(deck.Cases[i].Prompt) == "" {
-			return TaskDeck{}, fmt.Errorf("case %q missing prompt", deck.Cases[i].ID)
+		if len(tc.Stages) > 0 {
+			// Staged cases: the workflow path is mandatory (stages share one
+			// persisted workflow instance) and the case-level prompt/agent are
+			// forbidden (each stage carries its own agent and prompt).
+			if strings.TrimSpace(tc.WorkflowPath) == "" {
+				return TaskDeck{}, fmt.Errorf("case %q with stages must set a workflow path", tc.ID)
+			}
+			if strings.TrimSpace(tc.Prompt) != "" {
+				return TaskDeck{}, fmt.Errorf("case %q with stages must not set a case-level prompt", tc.ID)
+			}
+			if strings.TrimSpace(tc.AgentPath) != "" {
+				return TaskDeck{}, fmt.Errorf("case %q with stages must not set a case-level agent", tc.ID)
+			}
+			for j := range tc.Stages {
+				stage := &tc.Stages[j]
+				if strings.TrimSpace(stage.Agent) == "" {
+					return TaskDeck{}, fmt.Errorf("case %q stage %d missing agent", tc.ID, j)
+				}
+				if strings.TrimSpace(stage.Prompt) == "" {
+					return TaskDeck{}, fmt.Errorf("case %q stage %d missing prompt", tc.ID, j)
+				}
+				if strings.TrimSpace(stage.ID) == "" {
+					stage.ID = fmt.Sprintf("stage-%d", j+1)
+				}
+				if strings.TrimSpace(stage.Eval.Name) == "" {
+					stage.Eval.Name = tc.ID + ":" + stage.ID
+				}
+			}
+		} else {
+			// Non-staged cases keep the legacy validation: prompt is required
+			// and an agent must be resolvable (case-level or deck-level).
+			if strings.TrimSpace(tc.Prompt) == "" {
+				return TaskDeck{}, fmt.Errorf("case %q missing prompt", tc.ID)
+			}
+			if strings.TrimSpace(tc.AgentPath) == "" && len(deck.Agents) == 0 {
+				return TaskDeck{}, fmt.Errorf("case %q missing agent path", tc.ID)
+			}
 		}
-		if strings.TrimSpace(deck.Cases[i].AgentPath) == "" && len(deck.Agents) == 0 {
-			return TaskDeck{}, fmt.Errorf("case %q missing agent path", deck.Cases[i].ID)
+		if tc.Repeats <= 0 {
+			tc.Repeats = 1
 		}
-		if deck.Cases[i].Repeats <= 0 {
-			deck.Cases[i].Repeats = 1
+		if tc.TimeoutSeconds <= 0 {
+			tc.TimeoutSeconds = deck.TimeoutSeconds
 		}
-		if deck.Cases[i].TimeoutSeconds <= 0 {
-			deck.Cases[i].TimeoutSeconds = deck.TimeoutSeconds
-		}
-		if strings.TrimSpace(deck.Cases[i].Eval.Name) == "" {
-			deck.Cases[i].Eval.Name = deck.Cases[i].ID
+		if strings.TrimSpace(tc.Eval.Name) == "" {
+			tc.Eval.Name = tc.ID
 		}
 	}
 	return deck, nil

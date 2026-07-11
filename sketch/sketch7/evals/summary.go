@@ -24,6 +24,7 @@ type BatchSummary struct {
 	ByCase              map[string]CaseSummary `json:"by_case"`
 	ByAgent             map[string]CaseSummary `json:"by_agent"`
 	ByModel             map[string]CaseSummary `json:"by_model"`
+	ByStage             map[string]CaseSummary `json:"by_stage,omitempty"`
 }
 
 type CaseSummary struct {
@@ -85,6 +86,7 @@ func SummarizeRuns(records []RunRecord) BatchSummary {
 		ByCase:              map[string]CaseSummary{},
 		ByAgent:             map[string]CaseSummary{},
 		ByModel:             map[string]CaseSummary{},
+		ByStage:             map[string]CaseSummary{},
 	}
 	for _, record := range records {
 		summary.Total++
@@ -119,6 +121,10 @@ func SummarizeRuns(records []RunRecord) BatchSummary {
 		if key := modelSummaryKey(record); key != "" {
 			summary.ByModel[key] = accumulateCaseSummary(summary.ByModel[key], record)
 		}
+		if strings.TrimSpace(record.StageID) != "" {
+			stageKey := record.CaseID + ":" + record.StageID
+			summary.ByStage[stageKey] = accumulateCaseSummary(summary.ByStage[stageKey], record)
+		}
 	}
 	summary.PassRate = passRate(summary.Passed, summary.Total)
 	for key, value := range summary.ByCase {
@@ -132,6 +138,10 @@ func SummarizeRuns(records []RunRecord) BatchSummary {
 	for key, value := range summary.ByModel {
 		value.PassRate = passRate(value.Passed, value.Total)
 		summary.ByModel[key] = value
+	}
+	for key, value := range summary.ByStage {
+		value.PassRate = passRate(value.Passed, value.Total)
+		summary.ByStage[key] = value
 	}
 	return summary
 }
@@ -166,6 +176,9 @@ func PrintBatchSummary(summary BatchSummary) {
 	printCountMap("finalization_reasons", summary.FinalizationReasons)
 	printCountMap("failed_checks", summary.FailedChecks)
 	printCaseSummaries("by_case", summary.ByCase)
+	if len(summary.ByStage) > 0 {
+		printCaseSummaries("by_stage", summary.ByStage)
+	}
 	printCaseSummaries("by_agent", summary.ByAgent)
 	printCaseSummaries("by_model", summary.ByModel)
 }

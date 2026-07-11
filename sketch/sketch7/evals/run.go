@@ -29,6 +29,8 @@ type RunRecord struct {
 	ModelID     string            `json:"model_id,omitempty"`
 	ModelRef    string            `json:"model_ref,omitempty"`
 	SessionID   string            `json:"session_id"`
+	StageID     string            `json:"stage_id,omitempty"`
+	StageIndex  int               `json:"stage_index,omitempty"`
 	StartedAt   string            `json:"started_at"`
 	FinishedAt  string            `json:"finished_at"`
 	Passed      bool              `json:"passed"`
@@ -71,6 +73,39 @@ func RunDeck(config RunnerConfig) error {
 
 	encoder := json.NewEncoder(f)
 	for _, tc := range deck.Cases {
+		if len(tc.Stages) > 0 {
+			// Staged cases iterate models × repeats only (stage agents come
+			// from the stages). The whole case is skipped iff ALL its stage
+			// run IDs are already in completed; otherwise the whole case is
+			// re-run but only records whose run IDs are NOT already in
+			// completed are encoded (crash-window dedupe: a partial write
+			// before a crash should not duplicate completed stage records).
+			for _, modelPath := range modelPathsFor(deck, tc, config.DefaultModelPath) {
+				for repeat := 1; repeat <= tc.Repeats; repeat++ {
+					stageRunIDs := stageRunIDsFor(deck, tc, modelPath, repeat)
+					allCompleted := true
+					for _, id := range stageRunIDs {
+						if !completed[id] {
+							allCompleted = false
+							break
+						}
+					}
+					if allCompleted {
+						continue
+					}
+					records := runStagedCase(deck, tc, modelPath, repeat, config)
+					for _, record := range records {
+						if completed[record.RunID] {
+							continue
+						}
+						if err := encoder.Encode(record); err != nil {
+							return err
+						}
+					}
+				}
+			}
+			continue
+		}
 		for _, agentPath := range agentPathsFor(deck, tc) {
 			for _, modelPath := range modelPathsFor(deck, tc, config.DefaultModelPath) {
 				for repeat := 1; repeat <= tc.Repeats; repeat++ {
@@ -165,9 +200,22 @@ func runIDFor(deck TaskDeck, tc TaskCase, agentPath, modelPath string, repeat in
 }
 
 func runCase(deck TaskDeck, tc TaskCase, agentPath, modelPath string, repeat int, config RunnerConfig) RunRecord {
-	started := time.Now().UTC()
 	runID := runIDFor(deck, tc, agentPath, modelPath, repeat)
 	sessionID := fmt.Sprintf("eval-%s", runID)
+	record, _ := executeSession(deck, tc, runID, sessionID, tc.Prompt, agentPath, modelPath, tc.Eval, repeat, config, nil)
+	return record
+}
+
+// executeSession runs one (agent, prompt) session against a workflow. When
+// sharedWorkflow is nil a fresh WorkflowHistory is created (today's behavior);
+// when non-nil it is reused so staged cases share one persisted workflow
+// instance across stages. Bind records are appended on both the session and
+// workflow sides with a bindingID unique per call. The caller owns unbind
+// records for shared workflows (staged cases); executeSession never unbinds.
+// The returned *logs.SessionHistory is non-nil when a workflow was bound,
+// letting the caller append unbind records on the session side.
+func executeSession(deck TaskDeck, tc TaskCase, runID, sessionID, promptText, agentPath, modelPath string, eval SessionEvalCase, repeat int, config RunnerConfig, sharedWorkflow *logs.WorkflowHistory) (RunRecord, *logs.SessionHistory) {
+	started := time.Now().UTC()
 	record := RunRecord{RunID: runID, DeckName: deck.Name, CaseID: tc.ID, RepeatIndex: repeat, ModelLabel: modelLabel(modelPath), SessionID: sessionID, StartedAt: started.Format(time.RFC3339Nano)}
 	memory := catalog.NewMemory()
 	for _, path := range []string{modelPath, agentPath, tc.WorkflowPath} {
@@ -178,19 +226,19 @@ func runCase(deck TaskDeck, tc TaskCase, agentPath, modelPath string, repeat int
 		if err != nil {
 			record.Error = err.Error()
 			record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-			return record
+			return record, nil
 		}
 		if err := catalog.LoadIntoMemory(memory, raw); err != nil {
 			record.Error = err.Error()
 			record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-			return record
+			return record, nil
 		}
 	}
 	modelDef, ok := firstModel(memory)
 	if !ok {
 		record.Error = "no model definition loaded"
 		record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		return record
+		return record, nil
 	}
 	record.ModelID = modelDef.Name
 	if len(modelDef.Providers) > 0 {
@@ -200,7 +248,7 @@ func runCase(deck TaskDeck, tc TaskCase, agentPath, modelPath string, repeat int
 	if !ok {
 		record.Error = "no agent definition loaded"
 		record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		return record
+		return record, nil
 	}
 	record.AgentID = agentDef.Name
 	workflowDef, hasWorkflow := firstWorkflow(memory)
@@ -213,33 +261,137 @@ func runCase(deck TaskDeck, tc TaskCase, agentPath, modelPath string, repeat int
 	if err != nil {
 		record.Error = err.Error()
 		record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		return record
+		return record, nil
 	}
 	projections, maxHistory, err := prompt.BuildProjectionPlan(agentDef)
 	if err != nil {
 		record.Error = err.Error()
 		record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		return record
+		return record, nil
 	}
 	loop := runner.Loop{Provider: config.Provider, Tools: toolRegistry, Projections: projections, MaxHistory: maxHistory, Deadline: started.Add(caseTimeout(tc))}
 	sessionHistory := logs.NewSessionHistory(sessionID)
 	sessionHistory.AgentID = agentDef.Name
 	var workflowHistory *logs.WorkflowHistory
 	if hasWorkflow {
-		workflowHistory = logs.NewWorkflowHistory(sessionID + ":" + workflowDef.Name)
+		if sharedWorkflow != nil {
+			workflowHistory = sharedWorkflow
+		} else {
+			workflowHistory = logs.NewWorkflowHistory(sessionID + ":" + workflowDef.Name)
+		}
 		bindingID := "bind-" + sessionID
 		sessionHistory.Append(logs.SessionWorkflowBindingRecord{SessionBaseRecord: sessionHistory.NextRecord("workflow_binding_ref"), BindingID: bindingID, WorkflowID: workflowHistory.WorkflowID, Action: "bind"})
 		workflowHistory.Append(logs.WorkflowBindingRefRecord{WorkflowBaseRecord: workflowHistory.NextRecord("workflow_binding_ref"), BindingID: bindingID, AgentID: agentDef.Name, Action: "bind"})
 	}
-	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: tc.Prompt})
+	sessionHistory.Append(logs.UserMessageRecord{SessionBaseRecord: sessionHistory.NextRecord("user"), Content: promptText})
 	if err := loop.Run(hydratedAgent, agentDef, workflowDefPtr, sessionHistory, workflowHistory); err != nil {
 		record.Error = err.Error()
 	}
 	record.Stats = logs.ReduceSessionStats(sessionHistory)
-	record.Eval = EvaluateSessionStats(record.Stats, tc.Eval)
+	record.Eval = EvaluateSessionStats(record.Stats, eval)
 	record.Passed = record.Error == "" && record.Eval.Passed
 	record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	return record
+	var sessionHist *logs.SessionHistory
+	if hasWorkflow {
+		sessionHist = sessionHistory
+	}
+	return record, sessionHist
+}
+
+// stageRunIDFor derives the run ID for one stage of a staged case.
+func stageRunIDFor(deck TaskDeck, tc TaskCase, stage TaskStage, modelPath string, repeat, stageIndex int) string {
+	return fmt.Sprintf("%s:%s:%s:%s:%d:stage%d-%s", sanitizeID(deck.Name), sanitizeID(tc.ID), pathLabel(stage.Agent, "agent"), modelLabel(modelPath), repeat, stageIndex, sanitizeID(stage.ID))
+}
+
+// stageRunIDsFor returns the ordered list of stage run IDs for one (model,
+// repeat) of a staged case. Used by RunDeck to decide skip/dedupe.
+func stageRunIDsFor(deck TaskDeck, tc TaskCase, modelPath string, repeat int) []string {
+	ids := make([]string, 0, len(tc.Stages))
+	for i, stage := range tc.Stages {
+		ids = append(ids, stageRunIDFor(deck, tc, stage, effectiveModelPath(stage.Model, modelPath), repeat, i+1))
+	}
+	return ids
+}
+
+// effectiveModelPath returns the stage-level model override if set, else the
+// case-level model path.
+func effectiveModelPath(stageModel, caseModelPath string) string {
+	if strings.TrimSpace(stageModel) != "" {
+		return stageModel
+	}
+	return caseModelPath
+}
+
+// runStagedCase runs a staged case: one persisted WorkflowHistory shared
+// across all stages. For each stage it calls executeSession with the shared
+// workflow, then appends unbind records on both the session and workflow
+// sides. If a stage errors, every remaining stage emits a "skipped: prior
+// stage failed" record so every stage run ID is always present in the output
+// and resume treats the case as complete.
+func runStagedCase(deck TaskDeck, tc TaskCase, modelPath string, repeat int, config RunnerConfig) []RunRecord {
+	records := make([]RunRecord, 0, len(tc.Stages))
+	// Load the workflow definition once to derive the workflow ID for the
+	// shared history. The definition is also reloaded inside executeSession
+	// for hydration (the runtime needs it in memory).
+	workflowID := tc.ID
+	if raw, err := os.ReadFile(tc.WorkflowPath); err == nil {
+		memory := catalog.NewMemory()
+		if err := catalog.LoadIntoMemory(memory, raw); err == nil {
+			if wf, ok := firstWorkflow(memory); ok {
+				workflowID = wf.Name
+			}
+		}
+	}
+	sharedWorkflow := logs.NewWorkflowHistory(fmt.Sprintf("eval-%s:%s:%d:%s", sanitizeID(deck.Name), sanitizeID(tc.ID), repeat, workflowID))
+	failed := false
+	for i, stage := range tc.Stages {
+		stageIndex := i + 1
+		effectiveModel := effectiveModelPath(stage.Model, modelPath)
+		runID := stageRunIDFor(deck, tc, stage, effectiveModel, repeat, stageIndex)
+		sessionID := "eval-" + runID
+		if failed {
+			records = append(records, RunRecord{
+				RunID:       runID,
+				DeckName:    deck.Name,
+				CaseID:      tc.ID,
+				RepeatIndex: repeat,
+				ModelLabel:  modelLabel(effectiveModel),
+				SessionID:   sessionID,
+				StageID:     stage.ID,
+				StageIndex:  stageIndex,
+				Passed:      false,
+				Error:       "skipped: prior stage failed",
+			})
+			continue
+		}
+		record, stageSession := executeSession(deck, tc, runID, sessionID, stage.Prompt, stage.Agent, effectiveModel, stage.Eval, repeat, config, sharedWorkflow)
+		record.StageID = stage.ID
+		record.StageIndex = stageIndex
+		// Unbind on both sides after the stage session ends (evals/ owns the
+		// sequencing; the runtime never decides bind/unbind on its own). The
+		// session-side unbind lands after stats reduction, which is fine:
+		// binding records are bookkeeping, not evaluated behavior.
+		if stageSession != nil {
+			bindingID := "bind-" + sessionID
+			stageSession.Append(logs.SessionWorkflowBindingRecord{
+				SessionBaseRecord: stageSession.NextRecord("workflow_binding_ref"),
+				BindingID:         bindingID,
+				WorkflowID:        sharedWorkflow.WorkflowID,
+				Action:            "unbind",
+			})
+			sharedWorkflow.Append(logs.WorkflowBindingRefRecord{
+				WorkflowBaseRecord: sharedWorkflow.NextRecord("workflow_binding_ref"),
+				BindingID:          bindingID,
+				AgentID:            record.AgentID,
+				Action:             "unbind",
+			})
+		}
+		records = append(records, record)
+		if record.Error != "" {
+			failed = true
+		}
+	}
+	return records
 }
 
 func buildEvalToolRegistry(root string, agentDef defs.AgentDefinition, workflowDef *defs.WorkflowDefinition) tools.Registry {
