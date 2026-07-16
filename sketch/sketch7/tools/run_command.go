@@ -14,8 +14,8 @@ type RunCommandTool struct {
 	// Allowlist, when non-empty, switches the tool into its safe-command
 	// tier: the command is split into fields and executed directly (no
 	// shell, so metacharacters are inert literal arguments), the normalized
-	// command must match an allowlist entry exactly or extend one with
-	// further arguments, and workdir may not escape RootDir.
+	// command must match an allowlist entry exactly, and workdir may not
+	// escape RootDir.
 	Allowlist []string
 }
 
@@ -85,18 +85,17 @@ func (t RunCommandTool) Execute(request ExecutionRequest) (ExecutionResult, erro
 	return ExecutionResult{ToolName: "run_command", DisplayContent: output}, nil
 }
 
-// commandAllowed reports whether a field-normalized command matches an
-// allowlist entry exactly or extends one with further arguments. Prefix
-// matching is on whole tokens: "go test" allows "go test ./..." but not
-// "go testfoo". Because allowlisted commands run without a shell, extra
-// arguments cannot smuggle in command chaining.
+// commandAllowed reports whether a field-normalized command exactly matches
+// an allowlist entry. Exact matching keeps the safe tier narrow: a caller
+// cannot append flags such as `go test -exec` or redirect the command to an
+// unreviewed package.
 func commandAllowed(normalized string, allowlist []string) bool {
 	for _, entry := range allowlist {
 		entry = strings.Join(strings.Fields(entry), " ")
 		if entry == "" {
 			continue
 		}
-		if normalized == entry || strings.HasPrefix(normalized, entry+" ") {
+		if normalized == entry {
 			return true
 		}
 	}
@@ -114,7 +113,18 @@ func workdirWithinRoot(workdir, root string) bool {
 	if err != nil {
 		return false
 	}
-	return absWorkdir == absRoot || strings.HasPrefix(absWorkdir, absRoot+string(filepath.Separator))
+	if absWorkdir != absRoot && !strings.HasPrefix(absWorkdir, absRoot+string(filepath.Separator)) {
+		return false
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return false
+	}
+	resolvedWorkdir, err := filepath.EvalSymlinks(absWorkdir)
+	if err != nil {
+		return false
+	}
+	return resolvedWorkdir == resolvedRoot || strings.HasPrefix(resolvedWorkdir, resolvedRoot+string(filepath.Separator))
 }
 
 func formatCommandOutput(command, workdir, stdout, stderr string, code int, timedOut bool) string {

@@ -105,3 +105,64 @@ func TestReplaceTextToolErrorsWhenFileMissing(t *testing.T) {
 		t.Fatal("expected error result")
 	}
 }
+
+func TestReplaceTextToolRejectsPathsOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(filepath.Dir(root), "outside.txt")
+	if err := os.WriteFile(outside, []byte("BEFORE"), 0o644); err != nil {
+		t.Fatalf("write outside fixture: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(outside) })
+	tool := ReplaceTextTool{RootDir: root}
+	for _, requested := range []string{"../outside.txt", outside} {
+		result, err := tool.Execute(ExecutionRequest{
+			History: logs.NewSessionHistory("session-escape"),
+			Call: provider.ToolRequestOutput{Call: provider.ToolCall{
+				CallID: "call-escape", ToolName: "replace_text",
+				Arguments: map[string]string{"path": requested, "old_text": "BEFORE", "new_text": "AFTER"},
+			}},
+		})
+		if err != nil {
+			t.Fatalf("Execute(%q): %v", requested, err)
+		}
+		if !result.IsError || !strings.Contains(result.DisplayContent, "escapes the tool root") {
+			t.Fatalf("Execute(%q) = %+v, want root escape rejection", requested, result)
+		}
+	}
+	raw, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatalf("read outside fixture: %v", err)
+	}
+	if string(raw) != "BEFORE" {
+		t.Fatalf("outside file was modified: %q", raw)
+	}
+}
+
+func TestReplaceTextToolRejectsSymlinkTarget(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("BEFORE"), 0o644); err != nil {
+		t.Fatalf("write outside fixture: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "link.txt")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	tool := ReplaceTextTool{RootDir: root}
+	result, err := tool.Execute(ExecutionRequest{
+		History: logs.NewSessionHistory("session-symlink"),
+		Call: provider.ToolRequestOutput{Call: provider.ToolCall{
+			CallID: "call-symlink", ToolName: "replace_text",
+			Arguments: map[string]string{"path": "link.txt", "old_text": "BEFORE", "new_text": "AFTER"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !result.IsError || !strings.Contains(result.DisplayContent, "escapes the tool root") {
+		t.Fatalf("result = %+v, want symlink rejection", result)
+	}
+	raw, _ := os.ReadFile(outside)
+	if string(raw) != "BEFORE" {
+		t.Fatalf("outside file was modified: %q", raw)
+	}
+}

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -88,8 +89,8 @@ func runCommandRequest(callID, command string, extra map[string]string) Executio
 	}
 }
 
-func TestRunCommandToolAllowlistPermitsPrefixedCommand(t *testing.T) {
-	tool := RunCommandTool{RootDir: t.TempDir(), DefaultTimeout: 5 * time.Second, Allowlist: []string{"printf"}}
+func TestRunCommandToolAllowlistPermitsExactCommand(t *testing.T) {
+	tool := RunCommandTool{RootDir: t.TempDir(), DefaultTimeout: 5 * time.Second, Allowlist: []string{"printf hello"}}
 	result, err := tool.Execute(runCommandRequest("call-allow-001", "printf hello", nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -109,6 +110,7 @@ func TestRunCommandToolAllowlistRejectsUnlistedCommand(t *testing.T) {
 		"go testfoo", // token-boundary: prefix must match whole tokens
 		"gofmt -l .", // "go" prefix does not cover gofmt
 		"bash -c 'go test'",
+		"go test ./...", // arguments may not extend an allowlisted command
 	} {
 		result, err := tool.Execute(runCommandRequest("call-allow-002", command, nil))
 		if err != nil {
@@ -122,10 +124,11 @@ func TestRunCommandToolAllowlistRejectsUnlistedCommand(t *testing.T) {
 
 func TestRunCommandToolAllowlistExecutesWithoutShell(t *testing.T) {
 	tempDir := t.TempDir()
-	tool := RunCommandTool{RootDir: tempDir, DefaultTimeout: 5 * time.Second, Allowlist: []string{"printf"}}
+	command := "printf hi; touch " + tempDir + "/pwned"
+	tool := RunCommandTool{RootDir: tempDir, DefaultTimeout: 5 * time.Second, Allowlist: []string{command}}
 	// Under bash -lc this would chain into touch; without a shell the
 	// metacharacters are inert literal arguments to printf.
-	result, err := tool.Execute(runCommandRequest("call-allow-003", "printf hi; touch "+tempDir+"/pwned", nil))
+	result, err := tool.Execute(runCommandRequest("call-allow-003", command, nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -138,7 +141,7 @@ func TestRunCommandToolAllowlistExecutesWithoutShell(t *testing.T) {
 }
 
 func TestRunCommandToolAllowlistClampsWorkdir(t *testing.T) {
-	tool := RunCommandTool{RootDir: t.TempDir(), DefaultTimeout: 5 * time.Second, Allowlist: []string{"printf"}}
+	tool := RunCommandTool{RootDir: t.TempDir(), DefaultTimeout: 5 * time.Second, Allowlist: []string{"printf hi"}}
 	for _, workdir := range []string{"/", "../..", "/tmp"} {
 		result, err := tool.Execute(runCommandRequest("call-allow-004", "printf hi", map[string]string{"workdir": workdir}))
 		if err != nil {
@@ -147,6 +150,21 @@ func TestRunCommandToolAllowlistClampsWorkdir(t *testing.T) {
 		if !result.IsError || !strings.Contains(result.DisplayContent, "escapes the tool root") {
 			t.Fatalf("workdir %q: expected escape rejection, got %+v", workdir, result)
 		}
+	}
+}
+
+func TestRunCommandToolAllowlistRejectsSymlinkedWorkdir(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Symlink(t.TempDir(), filepath.Join(root, "linked")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	tool := RunCommandTool{RootDir: root, DefaultTimeout: 5 * time.Second, Allowlist: []string{"printf hi"}}
+	result, err := tool.Execute(runCommandRequest("call-allow-symlink", "printf hi", map[string]string{"workdir": "linked"}))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !result.IsError || !strings.Contains(result.DisplayContent, "escapes the tool root") {
+		t.Fatalf("result = %+v, want symlinked workdir rejection", result)
 	}
 }
 

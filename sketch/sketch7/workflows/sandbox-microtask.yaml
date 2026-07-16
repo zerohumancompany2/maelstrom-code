@@ -1,0 +1,66 @@
+apiVersion: maelstrom/v1
+kind: Workflow
+name: sandbox-microtask
+description: >-
+  One bounded read-edit-validate task executed inside a disposable sandbox.
+context: >-
+  Make only the requested small change. Read before editing, run the exact
+  allowlisted validation command from the request, and deliver a durable
+  artifact. Set transition to "finish" only after validation succeeds.
+statechart:
+  initialState: editing
+  states:
+    - name: editing
+      description: Inspect, edit, and validate the requested microtask.
+      visibleTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+        - replace_text
+        - run_command
+      enabledTools:
+        - list_files
+        - search_files
+        - get_file_skeleton
+        - read_symbol
+        - find_references
+        - read_file
+        - replace_text
+        - run_command
+      allowedTriggers:
+        - finish
+      inputs:
+        required:
+          - user_request
+        optional:
+          - repo_context
+      outputs:
+        schema: sandbox_change_v1
+        requiredFields:
+          - summary
+          - files_changed
+          - validation
+          - transition
+        optionalFields:
+          - notes
+        strict: false
+      completion:
+        successWhen:
+          - summary states the bounded change
+          - files_changed lists every changed path
+          - validation names the command and says whether it passed
+          - transition is "finish" only after successful validation
+      bounds:
+        maxInferenceTurns: 8
+        maxToolCalls: 14
+        maxWallTimeSeconds: 240
+        maxFinalizationRetries: 2
+    - name: done
+      description: The sandboxed change was validated and reported.
+  transitions:
+    - trigger: finish
+      from: editing
+      to: done

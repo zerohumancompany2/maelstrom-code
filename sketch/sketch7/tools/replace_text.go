@@ -33,9 +33,9 @@ func (t ReplaceTextTool) Execute(request ExecutionRequest) (ExecutionResult, err
 	if oldText == "" {
 		return ExecutionResult{ToolName: "replace_text", DisplayContent: "replace error: old_text is required", IsError: true}, nil
 	}
-	absPath := relPath
-	if !filepath.IsAbs(absPath) {
-		absPath = filepath.Join(t.RootDir, relPath)
+	absPath, ok := pathWithinRoot(t.RootDir, relPath)
+	if !ok {
+		return ExecutionResult{ToolName: "replace_text", DisplayContent: fmt.Sprintf("replace error: path %q escapes the tool root", relPath), IsError: true}, nil
 	}
 	contentBytes, err := os.ReadFile(absPath)
 	if err != nil {
@@ -57,4 +57,40 @@ func (t ReplaceTextTool) Execute(request ExecutionRequest) (ExecutionResult, err
 		ToolName:       "replace_text",
 		DisplayContent: fmt.Sprintf("replaced text in %s", relPath),
 	}, nil
+}
+
+// pathWithinRoot resolves a tool path beneath root. Absolute paths and
+// relative traversal outside root are rejected: write tools must never be
+// able to escape a disposable sandbox (or their configured live root).
+func pathWithinRoot(root, requested string) (string, bool) {
+	if filepath.IsAbs(requested) {
+		return "", false
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", false
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return "", false
+	}
+	absPath, err := filepath.Abs(filepath.Join(absRoot, requested))
+	if err != nil {
+		return "", false
+	}
+	if absPath != absRoot && !strings.HasPrefix(absPath, absRoot+string(filepath.Separator)) {
+		return "", false
+	}
+	info, err := os.Lstat(absPath)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		return "", false
+	}
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return "", false
+	}
+	if resolvedPath != resolvedRoot && !strings.HasPrefix(resolvedPath, resolvedRoot+string(filepath.Separator)) {
+		return "", false
+	}
+	return resolvedPath, true
 }

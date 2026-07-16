@@ -467,10 +467,13 @@ func buildEvalToolRegistry(root string, tc TaskCase, agentDef defs.AgentDefiniti
 		tools.ReadSymbolTool{RootDir: root},
 	}
 	if tc.Sandbox {
-		registryTools = append(registryTools,
-			tools.ReplaceTextTool{RootDir: root},
-			tools.RunCommandTool{RootDir: root, Allowlist: tc.CommandAllowlist},
-		)
+		registryTools = append(registryTools, tools.ReplaceTextTool{RootDir: root})
+		// A sandbox limits file damage but is not a process sandbox. Never
+		// expose the legacy shell tier in evals: run_command exists only when
+		// the case supplies an exact no-shell allowlist.
+		if len(tc.CommandAllowlist) > 0 {
+			registryTools = append(registryTools, tools.RunCommandTool{RootDir: root, Allowlist: tc.CommandAllowlist})
+		}
 	}
 	return tools.NewRegistry(registryTools...)
 }

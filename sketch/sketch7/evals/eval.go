@@ -132,7 +132,12 @@ func EvaluateSessionStats(stats logs.SessionStats, eval SessionEvalCase) EvalRes
 func EvaluateFileArtifacts(root string, eval SessionEvalCase, result *EvalResult) {
 	for _, check := range eval.RequiredFileContains {
 		name := "file_contains:" + check.Path
-		raw, err := os.ReadFile(filepath.Join(root, check.Path))
+		filePath, ok := evalPathWithinRoot(root, check.Path)
+		if !ok {
+			result.addCheck(name, false, fmt.Sprintf("%d/%d terms", len(check.Terms), len(check.Terms)), "path escapes the case root")
+			continue
+		}
+		raw, err := os.ReadFile(filePath)
 		if err != nil {
 			result.addCheck(name, false, fmt.Sprintf("%d/%d terms", len(check.Terms), len(check.Terms)), "file not readable: "+err.Error())
 			continue
@@ -145,6 +150,50 @@ func EvaluateFileArtifacts(root string, eval SessionEvalCase, result *EvalResult
 		}
 		result.addCheck(name, len(missing) == 0, fmt.Sprintf("%d/%d terms", total, total), actual)
 	}
+}
+
+func evalPathWithinRoot(root, requested string) (string, bool) {
+	if filepath.IsAbs(requested) {
+		return "", false
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", false
+	}
+	absPath, err := filepath.Abs(filepath.Join(absRoot, requested))
+	if err != nil {
+		return "", false
+	}
+	if absPath != absRoot && !strings.HasPrefix(absPath, absRoot+string(filepath.Separator)) {
+		return "", false
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return "", false
+	}
+	resolvedParent, err := filepath.EvalSymlinks(filepath.Dir(absPath))
+	if err != nil {
+		return "", false
+	}
+	if resolvedParent != resolvedRoot && !strings.HasPrefix(resolvedParent, resolvedRoot+string(filepath.Separator)) {
+		return "", false
+	}
+	resolvedPath := filepath.Join(resolvedParent, filepath.Base(absPath))
+	if _, err := os.Lstat(absPath); os.IsNotExist(err) {
+		// Keep a lexically safe missing path so ReadFile can report the useful
+		// not-found error rather than misclassifying it as an escape.
+		return resolvedPath, true
+	} else if err != nil {
+		return "", false
+	}
+	resolvedPath, err = filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return "", false
+	}
+	if resolvedPath != resolvedRoot && !strings.HasPrefix(resolvedPath, resolvedRoot+string(filepath.Separator)) {
+		return "", false
+	}
+	return resolvedPath, true
 }
 
 // missingFiles returns the required paths not present in the files-read map.

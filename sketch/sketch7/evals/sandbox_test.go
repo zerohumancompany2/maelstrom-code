@@ -123,11 +123,15 @@ func TestBuildEvalToolRegistryGatesWriteTools(t *testing.T) {
 	if err := sandboxed.MustHave("replace_text"); err != nil {
 		t.Fatalf("replace_text should be present for sandbox case: %v", err)
 	}
-	if err := sandboxed.MustHave("run_command"); err != nil {
-		t.Fatalf("run_command should be present for sandbox case: %v", err)
+	if err := sandboxed.MustHave("run_command"); err == nil {
+		t.Fatal("run_command should be absent for a sandbox case without an allowlist")
 	}
 	if err := sandboxed.MustHave("read_file"); err != nil {
 		t.Fatalf("read_file should be present: %v", err)
+	}
+	withCommands := buildEvalToolRegistry(t.TempDir(), TaskCase{Sandbox: true, CommandAllowlist: []string{"go test ./..."}}, agentDef, nil)
+	if err := withCommands.MustHave("run_command"); err != nil {
+		t.Fatalf("run_command should be present with an allowlist: %v", err)
 	}
 }
 
@@ -174,6 +178,31 @@ func TestEvaluateFileArtifacts(t *testing.T) {
 	}
 	if !strings.Contains(missingResult.Checks[0].Actual, "file not readable") {
 		t.Fatalf("actual = %q, want substring %q", missingResult.Checks[0].Actual, "file not readable")
+	}
+}
+
+func TestEvaluateFileArtifactsRejectsPathsOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	result := EvalResult{Passed: true}
+	EvaluateFileArtifacts(root, SessionEvalCase{RequiredFileContains: []FileContainsCheck{{Path: "../outside.txt", Terms: []string{"anything"}}}}, &result)
+	if result.Passed || len(result.Checks) != 1 || !strings.Contains(result.Checks[0].Actual, "escapes the case root") {
+		t.Fatalf("result = %+v, want path escape rejection", result)
+	}
+}
+
+func TestEvaluateFileArtifactsRejectsSymlinkOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0o644); err != nil {
+		t.Fatalf("write outside fixture: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "link.txt")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	result := EvalResult{Passed: true}
+	EvaluateFileArtifacts(root, SessionEvalCase{RequiredFileContains: []FileContainsCheck{{Path: "link.txt", Terms: []string{"secret"}}}}, &result)
+	if result.Passed || len(result.Checks) != 1 || !strings.Contains(result.Checks[0].Actual, "escapes the case root") {
+		t.Fatalf("result = %+v, want symlink escape rejection", result)
 	}
 }
 
@@ -383,5 +412,29 @@ func TestRunDeckStagedSandboxSpansStages(t *testing.T) {
 	}
 	if strings.Contains(string(original), "AFTER") {
 		t.Fatalf("original target.txt = %q, must NOT contain %q (edit should land only in sandbox)", original, "AFTER")
+	}
+}
+
+func TestLoadSandboxWriteMicrotasksDeck(t *testing.T) {
+	deck, err := LoadTaskDeck(filepath.Join("decks", "sandbox-write-microtasks.yaml"))
+	if err != nil {
+		t.Fatalf("LoadTaskDeck: %v", err)
+	}
+	if len(deck.Models) != 3 || len(deck.Cases) != 2 {
+		t.Fatalf("deck matrix = %d models, %d cases; want 3 and 2", len(deck.Models), len(deck.Cases))
+	}
+	for _, tc := range deck.Cases {
+		if !tc.Sandbox {
+			t.Fatalf("case %q is not sandboxed", tc.ID)
+		}
+		if len(tc.CommandAllowlist) != 1 {
+			t.Fatalf("case %q command allowlist = %v, want one exact command", tc.ID, tc.CommandAllowlist)
+		}
+		if len(tc.Eval.RequiredFileContains) == 0 {
+			t.Fatalf("case %q has no post-run file assertion", tc.ID)
+		}
+		if tc.Eval.RequiredFinalWorkflowState != "done" || tc.Eval.MinValidWorkflowOutputs != 1 {
+			t.Fatalf("case %q workflow eval = %+v", tc.ID, tc.Eval)
+		}
 	}
 }

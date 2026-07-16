@@ -11,16 +11,18 @@ import (
 	"github.com/comalice/inference_sketch/sketch/sketch7/statecharts"
 )
 
-// readOnlyEvalTools mirrors the read-only subset of the eval tool registry
-// (evals.buildEvalToolRegistry). Repository workflows are read-only until
-// Phase 4 write gating lands, so every tool they reference must be here.
-var readOnlyEvalTools = map[string]bool{
+// repositoryEvalTools mirrors the eval tool registry. Write tools are safe to
+// declare now that evals exposes them only for sandboxed cases; a workflow's
+// declaration alone can never enable them against the live repository.
+var repositoryEvalTools = map[string]bool{
 	"list_files":        true,
 	"search_files":      true,
 	"get_file_skeleton": true,
 	"read_symbol":       true,
 	"find_references":   true,
 	"read_file":         true,
+	"replace_text":      true,
+	"run_command":       true,
 }
 
 // loadRepositoryWorkflows loads all workflow YAML files from the ../workflows directory.
@@ -275,10 +277,9 @@ func TestRepositoryWorkflowsAreCoherent(t *testing.T) {
 			}
 			// Tool names must be real registry tools: a typo'd name would
 			// silently narrow the runtime tool intersection to nothing.
-			// Read-only set only — write tools wait for Phase 4 gating.
 			for _, tool := range append(append([]string(nil), state.VisibleTools...), state.EnabledTools...) {
-				if !readOnlyEvalTools[tool] {
-					t.Fatalf("workflow %q: state %q references unknown or non-read-only tool %q", name, state.Name, tool)
+				if !repositoryEvalTools[tool] {
+					t.Fatalf("workflow %q: state %q references unknown eval tool %q", name, state.Name, tool)
 				}
 			}
 		}
