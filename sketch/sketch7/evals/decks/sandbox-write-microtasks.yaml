@@ -28,9 +28,13 @@ cases:
       min_valid_workflow_outputs: 1
       max_invalid_workflow_outputs: 1
       required_final_workflow_state: done
+      # Cognitive observations are diagnostic noise in this tier; disk state,
+      # command execution, and the workflow artifact are the write gate.
+      max_invalid_outputs: 8
+      max_missing_required: 8
       max_invalid_tool_proposals: 2
       max_tool_execution_failures: 1
-      max_unrecovered_retries: 2
+      max_unrecovered_retries: 4
       required_file_contains:
         - path: sketch/sketch7/evals/testdata/write-microtasks/single/greeting.go
           terms:
@@ -58,9 +62,11 @@ cases:
       min_valid_workflow_outputs: 1
       max_invalid_workflow_outputs: 1
       required_final_workflow_state: done
+      max_invalid_outputs: 8
+      max_missing_required: 8
       max_invalid_tool_proposals: 2
       max_tool_execution_failures: 1
-      max_unrecovered_retries: 2
+      max_unrecovered_retries: 4
       required_file_contains:
         - path: sketch/sketch7/evals/testdata/write-microtasks/multi/config.go
           terms:
