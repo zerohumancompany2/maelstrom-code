@@ -160,6 +160,25 @@ func TestEvaluateSessionStatsChecksFinalOutputContains(t *testing.T) {
 	}
 }
 
+func TestEvaluateSessionStatsRequiresSuccessfulToolExecution(t *testing.T) {
+	stats := logs.SessionStats{ByTool: map[string]logs.PerToolStats{
+		"replace_text": {ExecutionSuccess: 1},
+		"run_command":  {ExecutionSuccess: 0, ExecutionFailures: 1},
+	}}
+	eval := SessionEvalCase{RequiredToolsExecuted: []string{"replace_text", "run_command"}, MaxToolExecutionFailures: 1}
+	result := EvaluateSessionStats(stats, eval)
+	checks := map[string]EvalCheck{}
+	for _, check := range result.Checks {
+		checks[check.Name] = check
+	}
+	if !checks["tool_executed:replace_text"].Passed {
+		t.Fatalf("replace_text check = %+v, want pass", checks["tool_executed:replace_text"])
+	}
+	if checks["tool_executed:run_command"].Passed || result.Passed {
+		t.Fatalf("run_command check/result = %+v/%+v, want failure", checks["tool_executed:run_command"], result)
+	}
+}
+
 func TestEvaluateSessionStatsChecksInvalidWorkflowOutputs(t *testing.T) {
 	stats := logs.SessionStats{Output: logs.OutputStats{ByChart: map[string]logs.BucketOutputStats{"workflow": {Invalid: 2}}}}
 	eval := SessionEvalCase{MaxInvalidWorkflowOutputs: 2}

@@ -33,6 +33,11 @@ type SessionEvalCase struct {
 	// tool root AFTER the session ends (the sandbox for sandboxed cases), so
 	// write-enabled microtasks can assert the edit actually landed on disk.
 	RequiredFileContains []FileContainsCheck `yaml:"required_file_contains" json:"required_file_contains,omitempty"`
+	// RequiredToolsExecuted requires at least one successful execution of
+	// each named tool. Write-tier cases use this to prove read-edit-validate
+	// behavior rather than accepting a plausible final answer with no edit or
+	// validation command.
+	RequiredToolsExecuted []string `yaml:"required_tools_executed" json:"required_tools_executed,omitempty"`
 }
 
 // FileContainsCheck asserts that a file under the case root exists and
@@ -108,6 +113,14 @@ func EvaluateSessionStats(stats logs.SessionStats, eval SessionEvalCase) EvalRes
 			actual += " (missing: " + strings.Join(missing, ", ") + ")"
 		}
 		result.addCheck("final_output_contains", len(missing) == 0, fmt.Sprintf("%d/%d terms", total, total), actual)
+	}
+	for _, toolName := range eval.RequiredToolsExecuted {
+		toolName = strings.TrimSpace(toolName)
+		if toolName == "" {
+			continue
+		}
+		executions := stats.ByTool[toolName].ExecutionSuccess
+		result.addCheck("tool_executed:"+toolName, executions > 0, ">= 1 successful execution", intString(executions))
 	}
 	workflowOutput := stats.Output.ByChart["workflow"]
 	result.addCheck("invalid_workflow_outputs", workflowOutput.Invalid <= eval.MaxInvalidWorkflowOutputs, lessOrEqual(eval.MaxInvalidWorkflowOutputs), intString(workflowOutput.Invalid))

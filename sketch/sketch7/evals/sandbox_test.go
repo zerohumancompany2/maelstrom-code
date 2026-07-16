@@ -433,8 +433,8 @@ func TestLoadSandboxWriteMicrotasksDeck(t *testing.T) {
 		if len(tc.Eval.RequiredFileContains) == 0 {
 			t.Fatalf("case %q has no post-run file assertion", tc.ID)
 		}
-		if tc.Eval.RequiredFinalWorkflowState != "done" || tc.Eval.MinValidWorkflowOutputs != 1 {
-			t.Fatalf("case %q workflow eval = %+v", tc.ID, tc.Eval)
+		if strings.Join(tc.Eval.RequiredToolsExecuted, ",") != "replace_text,run_command" {
+			t.Fatalf("case %q required tools = %v", tc.ID, tc.Eval.RequiredToolsExecuted)
 		}
 	}
 }
