@@ -1,0 +1,16 @@
+name: tiny-readonly
+description: Minimal read-only eval deck for sketch7 harness smoke tests.
+cases:
+  - id: stateless-summary
+    agent: agents/stateless-reader.yaml
+    prompt: Summarize the purpose of internal/evals/eval.go and mention at least one exported eval type.
+    repeats: 1
+    eval:
+      name: stateless-summary
+      require_completed: false
+      max_invalid_outputs: 2
+      max_invalid_tool_proposals: 2
+      max_tool_execution_failures: 0
+      max_unrecovered_retries: 2
+      max_missing_required: 2
+      max_wrong_state: 1

@@ -1,0 +1,115 @@
+name: paired-reader-battery
+description: >
+  Paired comparison of stateless-reader vs ooda-reader on the same case set.
+  Cases are chosen so both agents can structurally pass within their bounds
+  (stateless-reader allows at most 4 tool calls in a single state). Summary
+  by_agent gives the head-to-head readout. Run from the repo root.
+agents:
+  - agents/stateless-reader.yaml
+  - agents/ooda-reader.yaml
+models:
+  - models/openrouter-qwen3-coder-30b.yaml
+  - models/openrouter-qwen3.6-27b.yaml
+  - models/openrouter-mistral-small-24b.yaml
+  - models/openrouter-nemotron-nano-30b.yaml
+  - models/openrouter-glm-4.7-flash.yaml
+  - models/openrouter-minimax-m2.5.yaml
+timeoutSeconds: 240
+cases:
+  - id: discovery-test-coverage
+    prompt: >
+      Review the context inference implementation in internal/context and
+      assess how well its behavior is covered by tests. Cite the test evidence
+      you inspected.
+    repeats: 2
+    eval:
+      required_files_read:
+        - internal/context/context_test.go
+      max_invalid_tool_proposals: 2
+      max_invalid_outputs: 2
+      max_missing_required: 2
+      max_unrecovered_retries: 2
+      max_tool_execution_failures: 1
+      max_wrong_state: 1
+
+  - id: discovery-required-files
+    prompt: >
+      Review our implementation of context inference in internal/context
+      and report how it functions. Read the implementation files before
+      answering.
+    repeats: 2
+    eval:
+      required_files_read:
+        - internal/context/context.go
+        - internal/context/sections.go
+        - internal/context/repo.go
+      max_invalid_tool_proposals: 2
+      max_invalid_outputs: 2
+      max_missing_required: 2
+      max_unrecovered_retries: 2
+      max_tool_execution_failures: 1
+      max_wrong_state: 1
+
+  - id: format-schema-validity
+    prompt: >
+      Summarize the purpose of internal/evals/eval.go in one or two
+      sentences, citing the file as evidence.
+    repeats: 2
+    eval:
+      max_invalid_outputs: 0
+      max_missing_required: 0
+      max_invalid_tool_proposals: 0
+      max_tool_execution_failures: 0
+      max_unrecovered_retries: 0
+      max_wrong_state: 0
+
+  - id: synthesis-mechanism-summary
+    prompt: >
+      Read internal/context/context.go, internal/context/sections.go,
+      and internal/context/repo.go, then summarize how the context
+      inference mechanism works: how the inference payload is assembled, how
+      messages are trimmed, how sections are built, and how repo context is
+      generated.
+    repeats: 2
+    eval:
+      final_output_contains:
+        - payload
+        - section
+        - repo
+      max_invalid_outputs: 2
+      max_missing_required: 2
+      max_invalid_tool_proposals: 1
+      max_tool_execution_failures: 0
+      max_unrecovered_retries: 1
+      max_wrong_state: 0
+
+  - id: workflow-task-focus
+    prompt: >
+      Give a short orientation of the internal/statecharts package: what
+      it exposes and how compilation works. Stay on the task and keep evidence
+      gathering narrow.
+    repeats: 2
+    eval:
+      required_files_read:
+        - internal/statecharts/machine.go
+      max_files_read: 4
+      max_invalid_tool_proposals: 2
+      max_invalid_outputs: 2
+      max_missing_required: 2
+      max_unrecovered_retries: 2
+      max_tool_execution_failures: 1
+      max_wrong_state: 1
+
+  - id: control-completion
+    prompt: >
+      Inspect internal/evals/deck.go briefly and report what it does.
+      Keep evidence gathering minimal and finish with a complete report.
+    repeats: 2
+    eval:
+      require_completed: true
+      max_invalid_tool_proposals: 0
+      max_wrong_state: 0
+      max_invalid_outputs: 1
+      max_missing_required: 1
+      max_unrecovered_retries: 1
+      max_tool_execution_failures: 0

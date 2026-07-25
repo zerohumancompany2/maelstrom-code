@@ -1,0 +1,119 @@
+package runner
+
+import (
+	"testing"
+
+	"github.com/comalice/maelstrom/internal/catalog"
+	"github.com/comalice/maelstrom/internal/compile"
+	ctxpkg "github.com/comalice/maelstrom/internal/context"
+	"github.com/comalice/maelstrom/internal/logs"
+	"github.com/comalice/maelstrom/internal/prompt"
+	"github.com/comalice/maelstrom/internal/tools"
+)
+
+func TestReloadedAgentDefinitionAffectsSubsequentRun(t *testing.T) {
+	memory := catalog.NewMemory()
+	modelRaw := []byte("apiVersion: maelstrom/v1\nkind: Model\nname: test-model\nproviders:\n  - name: fake\n    modelRef: fake/model\nlimits:\n  contextWindow: 32768\n  maxOutputTokens: 1024\ndefaults:\n  temperature: 0.7\n  topP: 1.0\ncapabilities:\n  tools: true\n  reasoning: true\n  multimodal: false\n  streaming: false\n")
+	agentV1 := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: test-agent\ndescription: Test agent\nmodel: test-model\ncontext:\n  inputBudget: 2048\n  projections:\n    - type: system\n      name: system\n      prompt: System prompt v1\n    - type: state_task\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      prompt: Observe v1.\n  transitions: []\n")
+	agentV2 := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: test-agent\ndescription: Test agent\nmodel: test-model\ncontext:\n  inputBudget: 2048\n  projections:\n    - type: system\n      name: system\n      prompt: System prompt v2\n    - type: state_task\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n      prompt: Observe v2.\n  transitions: []\n")
+
+	if err := catalog.LoadIntoMemory(memory, modelRaw); err != nil {
+		t.Fatalf("load model: %v", err)
+	}
+	if err := catalog.LoadIntoMemory(memory, agentV1); err != nil {
+		t.Fatalf("load agent v1: %v", err)
+	}
+	modelDef, _ := memory.GetModel("test-model")
+	agentDefV1, _ := memory.GetAgent("test-agent")
+	toolRegistry := tools.NewRegistry()
+	hydratedV1, err := compile.HydrateAgent(agentDefV1, modelDef, toolRegistry)
+	if err != nil {
+		t.Fatalf("hydrate v1: %v", err)
+	}
+	projectionsV1, _, err := prompt.BuildProjectionPlan(agentDefV1)
+	if err != nil {
+		t.Fatalf("projection plan v1: %v", err)
+	}
+	sessionHistoryV1 := logs.NewSessionHistory("session-reload-1")
+	viewV1 := BuildSessionView(hydratedV1, agentDefV1, nil, sessionHistoryV1, nil)
+	payloadV1 := ctxpkg.Builder{MaxMessages: 12}.Build("payload-reload-v1", ctxpkg.BuildSections(agentDefV1, viewV1, sessionHistoryV1, ctxpkg.RepoContextOptions{}), viewV1, sessionHistoryV1, nil)
+	assembledV1, err := prompt.Assembler{Projections: projectionsV1}.Assemble(prompt.Input{Payload: payloadV1, Session: viewV1, History: sessionHistoryV1})
+	if err != nil {
+		t.Fatalf("assemble v1: %v", err)
+	}
+	if assembledV1.Segments[0].TokenText() != "System prompt v1" {
+		t.Fatalf("first prompt = %q, want System prompt v1", assembledV1.Segments[0].TokenText())
+	}
+
+	if err := memory.Reload(agentV2); err != nil {
+		t.Fatalf("reload agent v2: %v", err)
+	}
+	agentDefV2, _ := memory.GetAgent("test-agent")
+	hydratedV2, err := compile.HydrateAgent(agentDefV2, modelDef, toolRegistry)
+	if err != nil {
+		t.Fatalf("hydrate v2: %v", err)
+	}
+	projectionsV2, _, err := prompt.BuildProjectionPlan(agentDefV2)
+	if err != nil {
+		t.Fatalf("projection plan v2: %v", err)
+	}
+	sessionHistoryV2 := logs.NewSessionHistory("session-reload-2")
+	viewV2 := BuildSessionView(hydratedV2, agentDefV2, nil, sessionHistoryV2, nil)
+	payloadV2 := ctxpkg.Builder{MaxMessages: 12}.Build("payload-reload-v2", ctxpkg.BuildSections(agentDefV2, viewV2, sessionHistoryV2, ctxpkg.RepoContextOptions{}), viewV2, sessionHistoryV2, nil)
+	assembledV2, err := prompt.Assembler{Projections: projectionsV2}.Assemble(prompt.Input{Payload: payloadV2, Session: viewV2, History: sessionHistoryV2})
+	if err != nil {
+		t.Fatalf("assemble v2: %v", err)
+	}
+	if assembledV2.Segments[0].TokenText() != "System prompt v2" {
+		t.Fatalf("first prompt = %q, want System prompt v2", assembledV2.Segments[0].TokenText())
+	}
+	if assembledV2.Segments[1].TokenText() == assembledV1.Segments[1].TokenText() {
+		t.Fatalf("state task text did not change across reload: v1=%q v2=%q", assembledV1.Segments[1].TokenText(), assembledV2.Segments[1].TokenText())
+	}
+}
+
+func TestReloadedWorkflowDefinitionAffectsSubsequentRun(t *testing.T) {
+	memory := catalog.NewMemory()
+	modelRaw := []byte("apiVersion: maelstrom/v1\nkind: Model\nname: test-model\nproviders:\n  - name: fake\n    modelRef: fake/model\nlimits:\n  contextWindow: 32768\n  maxOutputTokens: 1024\ndefaults:\n  temperature: 0.7\n  topP: 1.0\ncapabilities:\n  tools: true\n  reasoning: true\n  multimodal: false\n  streaming: false\n")
+	agentRaw := []byte("apiVersion: maelstrom/v1\nkind: Agent\nname: test-agent\nmodel: test-model\ncontext:\n  inputBudget: 2048\n  projections:\n    - type: state_task\ncognitive:\n  initialState: observe\n  states:\n    - name: observe\n  transitions: []\n")
+	workflowV1 := []byte("apiVersion: maelstrom/v1\nkind: Workflow\nname: test-workflow\ndescription: Workflow v1\ncontext: Context v1\nstatechart:\n  initialState: chatting\n  states:\n    - name: chatting\n  transitions: []\n")
+	workflowV2 := []byte("apiVersion: maelstrom/v1\nkind: Workflow\nname: test-workflow\ndescription: Workflow v2\ncontext: Context v2\nstatechart:\n  initialState: chatting\n  states:\n    - name: chatting\n  transitions: []\n")
+
+	_ = catalog.LoadIntoMemory(memory, modelRaw)
+	_ = catalog.LoadIntoMemory(memory, agentRaw)
+	_ = catalog.LoadIntoMemory(memory, workflowV1)
+	modelDef, _ := memory.GetModel("test-model")
+	agentDef, _ := memory.GetAgent("test-agent")
+	workflowDefV1, _ := memory.GetWorkflow("test-workflow")
+	hydrated, err := compile.HydrateAgent(agentDef, modelDef, tools.NewRegistry())
+	if err != nil {
+		t.Fatalf("hydrate: %v", err)
+	}
+	projections, _, err := prompt.BuildProjectionPlan(agentDef)
+	if err != nil {
+		t.Fatalf("projection plan: %v", err)
+	}
+	sessionHistory := logs.NewSessionHistory("session-reload-wf")
+	sessionHistory.Append(logs.SessionWorkflowBindingRecord{SessionBaseRecord: sessionHistory.NextRecord("workflow_binding_ref"), BindingID: "bind-wf", WorkflowID: "workflow-instance", Action: "bind"})
+	workflowHistory := logs.NewWorkflowHistory("workflow-instance")
+	viewWfV1 := BuildSessionView(hydrated, agentDef, &workflowDefV1, sessionHistory, workflowHistory)
+	payloadWfV1 := ctxpkg.Builder{MaxMessages: 12}.Build("payload-workflow-v1", ctxpkg.BuildSections(agentDef, viewWfV1, sessionHistory, ctxpkg.RepoContextOptions{}), viewWfV1, sessionHistory, workflowHistory)
+	assembledV1, err := prompt.Assembler{Projections: projections}.Assemble(prompt.Input{Payload: payloadWfV1, Session: viewWfV1, History: sessionHistory, Workflow: workflowHistory})
+	if err != nil {
+		t.Fatalf("assemble v1: %v", err)
+	}
+
+	if err := memory.Reload(workflowV2); err != nil {
+		t.Fatalf("reload workflow v2: %v", err)
+	}
+	workflowDefV2, _ := memory.GetWorkflow("test-workflow")
+	viewWfV2 := BuildSessionView(hydrated, agentDef, &workflowDefV2, sessionHistory, workflowHistory)
+	payloadWfV2 := ctxpkg.Builder{MaxMessages: 12}.Build("payload-workflow-v2", ctxpkg.BuildSections(agentDef, viewWfV2, sessionHistory, ctxpkg.RepoContextOptions{}), viewWfV2, sessionHistory, workflowHistory)
+	assembledV2, err := prompt.Assembler{Projections: projections}.Assemble(prompt.Input{Payload: payloadWfV2, Session: viewWfV2, History: sessionHistory, Workflow: workflowHistory})
+	if err != nil {
+		t.Fatalf("assemble v2: %v", err)
+	}
+	if assembledV1.Segments[0].TokenText() == assembledV2.Segments[0].TokenText() {
+		t.Fatalf("state task text did not change across workflow reload: v1=%q v2=%q", assembledV1.Segments[0].TokenText(), assembledV2.Segments[0].TokenText())
+	}
+}

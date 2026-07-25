@@ -1,0 +1,217 @@
+name: autoresearch-repo-inspection
+description: >
+  Go port of the python autoresearch benchmark taxonomy
+  (docs/experiments/autoresearch/benchmarks). Discovery cases use ooda-reader
+  (multi-state bounds fit multi-file evidence gathering); single-turn format,
+  control, synthesis, and workflow cases use stateless-reader. Synthesis cases
+  approximate the python fixed-evidence-bundle setup end-to-end with directed
+  prompts plus keyword checks. Run from the repo root.
+models:
+  - models/openrouter-qwen3-coder-30b.yaml
+  - models/openrouter-minimax-m2.5.yaml
+  - models/openrouter-glm-4.7-flash.yaml
+timeoutSeconds: 240
+cases:
+  # --- discovery.context_inference.* ---
+  - id: discovery-required-files
+    agent: agents/ooda-reader.yaml
+    prompt: >
+      Review our implementation of context inference in internal/context
+      and report how it functions. List any issues you see. Make
+      recommendations on architectural improvements.
+    eval:
+      required_files_read:
+        - internal/context/context.go
+        - internal/context/sections.go
+        - internal/context/repo.go
+      max_invalid_tool_proposals: 2
+      max_invalid_outputs: 2
+      max_missing_required: 2
+      max_unrecovered_retries: 2
+      max_tool_execution_failures: 1
+      max_wrong_state: 1
+
+  - id: discovery-test-coverage
+    agent: agents/ooda-reader.yaml
+    prompt: >
+      Review the context inference implementation in internal/context and
+      assess how well its behavior is covered by tests. Cite the test evidence
+      you inspected.
+    eval:
+      required_files_read:
+        - internal/context/context_test.go
+      max_invalid_tool_proposals: 2
+      max_invalid_outputs: 2
+      max_missing_required: 2
+      max_unrecovered_retries: 2
+      max_tool_execution_failures: 1
+      max_wrong_state: 1
+
+  - id: discovery-adjacent-integration
+    agent: agents/ooda-reader.yaml
+    prompt: >
+      Review how context inference in internal/context integrates with
+      the rest of the runtime. Trace where the context builder is invoked and
+      how its output is consumed, citing implementation and test evidence.
+    eval:
+      required_files_read:
+        - internal/context/context.go
+        - internal/context/sections.go
+        - internal/runner/loop.go
+        - internal/context/context_test.go
+      max_invalid_tool_proposals: 2
+      max_invalid_outputs: 2
+      max_missing_required: 2
+      max_unrecovered_retries: 2
+      max_tool_execution_failures: 1
+      max_wrong_state: 1
+
+  - id: discovery-evidence-sufficiency
+    agent: agents/ooda-reader.yaml
+    prompt: >
+      Review our implementation of context inference in internal/context
+      and report how it functions, including its test coverage. Gather enough
+      implementation and test evidence before reporting.
+    eval:
+      required_files_read:
+        - internal/context/context.go
+        - internal/context/sections.go
+        - internal/context/repo.go
+        - internal/context/context_test.go
+      max_invalid_tool_proposals: 2
+      max_invalid_outputs: 2
+      max_missing_required: 2
+      max_unrecovered_retries: 2
+      max_tool_execution_failures: 1
+      max_wrong_state: 1
+
+  - id: discovery-runner-evidence-sufficiency
+    agent: agents/ooda-reader.yaml
+    prompt: >
+      Review how the internal/runner package consumes context inference. Cover
+      the context builder, its session log inputs, and its test coverage
+      before reporting.
+    eval:
+      required_files_read:
+        - internal/context/context.go
+        - internal/context/sections.go
+        - internal/context/context_test.go
+        - internal/logs/session.go
+      max_invalid_tool_proposals: 2
+      max_invalid_outputs: 2
+      max_missing_required: 2
+      max_unrecovered_retries: 2
+      max_tool_execution_failures: 1
+      max_wrong_state: 1
+
+  # --- format.repo_inspection.schema_validity ---
+  - id: format-schema-validity
+    agent: agents/stateless-reader.yaml
+    prompt: >
+      Summarize the purpose of internal/evals/eval.go in one or two
+      sentences, citing the file as evidence.
+    eval:
+      max_invalid_outputs: 0
+      max_missing_required: 0
+      max_invalid_tool_proposals: 0
+      max_tool_execution_failures: 0
+      max_unrecovered_retries: 0
+      max_wrong_state: 0
+
+  # --- control.repo_inspection.* ---
+  - id: control-forced-report-obedience
+    agent: agents/stateless-reader.yaml
+    prompt: >
+      Inspect internal/evals/deck.go briefly and report what it does.
+      Keep evidence gathering minimal and finish with a complete report.
+    eval:
+      require_completed: true
+      max_invalid_tool_proposals: 0
+      max_wrong_state: 0
+      max_invalid_outputs: 1
+      max_missing_required: 1
+      max_unrecovered_retries: 1
+      max_tool_execution_failures: 0
+
+  - id: control-repair-obedience
+    agent: agents/stateless-reader.yaml
+    prompt: >
+      Read internal/evals/run.go and report the exported types it
+      defines with a one-line description of each.
+    eval:
+      max_unrecovered_retries: 0
+      max_invalid_outputs: 2
+      max_missing_required: 2
+      max_invalid_tool_proposals: 1
+      max_tool_execution_failures: 0
+      max_wrong_state: 0
+
+  # --- synthesis.context_inference.* (end-to-end approximation) ---
+  - id: synthesis-mechanism-summary
+    agent: agents/stateless-reader.yaml
+    prompt: >
+      Read internal/context/context.go, internal/context/sections.go,
+      and internal/context/repo.go, then summarize how the context
+      inference mechanism works: how the inference payload is assembled, how
+      messages are trimmed, how sections are built, and how repo context is
+      generated.
+    eval:
+      final_output_contains:
+        - payload
+        - section
+        - repo
+      max_invalid_outputs: 2
+      max_missing_required: 2
+      max_invalid_tool_proposals: 1
+      max_tool_execution_failures: 0
+      max_unrecovered_retries: 1
+      max_wrong_state: 0
+
+  - id: synthesis-issue-finding
+    agent: agents/stateless-reader.yaml
+    prompt: >
+      Read internal/context/context.go and
+      internal/context/sections.go, then list concrete design issues you
+      can support from that code alone, such as unused parameters, hidden
+      shared state, or hardcoded coupling. Do not speculate beyond the files
+      you read.
+    eval:
+      final_output_contains:
+        - workflow
+      max_invalid_outputs: 2
+      max_missing_required: 2
+      max_invalid_tool_proposals: 1
+      max_tool_execution_failures: 0
+      max_unrecovered_retries: 1
+      max_wrong_state: 0
+
+  # --- workflow.* ---
+  - id: workflow-task-focus
+    agent: agents/ooda-reader.yaml
+    prompt: >
+      Give a short orientation of the internal/statecharts package: what
+      it exposes and how compilation works. Stay on the task and keep evidence
+      gathering narrow.
+    eval:
+      required_files_read:
+        - internal/statecharts/machine.go
+      max_files_read: 6
+      max_invalid_tool_proposals: 2
+      max_invalid_outputs: 2
+      max_missing_required: 2
+      max_unrecovered_retries: 2
+      max_tool_execution_failures: 1
+      max_wrong_state: 1
+
+  - id: workflow-tool-policy-compliance
+    agent: agents/stateless-reader.yaml
+    prompt: >
+      Report which tools you currently have available, then use exactly one of
+      them to confirm cmd/maelstrom/main.go exists before answering.
+    eval:
+      max_invalid_tool_proposals: 0
+      max_invalid_outputs: 1
+      max_missing_required: 1
+      max_tool_execution_failures: 0
+      max_unrecovered_retries: 1
+      max_wrong_state: 0

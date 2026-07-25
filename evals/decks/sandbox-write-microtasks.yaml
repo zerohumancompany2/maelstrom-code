@@ -1,0 +1,79 @@
+name: sandbox-write-microtasks
+description: >
+  Phase 4 write-enabled tier. Every run executes in a disposable repository
+  copy; replace_text and the no-shell allowlisted run_command are unavailable
+  unless sandbox is true. The committed source fixtures intentionally remain
+  broken, while post-run file checks and Go tests must pass inside each copy.
+models:
+  - models/openrouter-qwen3-coder-30b.yaml
+  - models/openrouter-minimax-m2.5.yaml
+  - models/openrouter-glm-4.7-flash.yaml
+timeoutSeconds: 300
+cases:
+  - id: single-file-greeting-fix
+    agent: agents/sandbox-coder.yaml
+    workflow: workflows/sandbox-microtask.yaml
+    sandbox: true
+    sandboxExcludes: ["docs"]
+    commandAllowlist:
+      - go test ./evals/testdata/write-microtasks/single
+    repeats: 1
+    prompt: >
+      Fix only evals/testdata/write-microtasks/single/greeting.go
+      so Greeting returns exactly "hello from maelstrom". Inspect the source
+      and its test, make the minimal edit, then validate with exactly:
+      go test ./evals/testdata/write-microtasks/single
+    eval:
+      require_completed: true
+      max_invalid_workflow_outputs: 1
+      # Cognitive observations are diagnostic noise in this tier; disk state,
+      # command execution, and the workflow artifact are the write gate.
+      max_invalid_outputs: 8
+      max_missing_required: 8
+      max_invalid_tool_proposals: 2
+      max_tool_execution_failures: 1
+      max_unrecovered_retries: 4
+      required_tools_executed:
+        - replace_text
+        - run_command
+      required_file_contains:
+        - path: evals/testdata/write-microtasks/single/greeting.go
+          terms:
+            - hello from maelstrom
+
+  - id: multi-file-retry-fix
+    agent: agents/sandbox-coder.yaml
+    workflow: workflows/sandbox-microtask.yaml
+    sandbox: true
+    sandboxExcludes: ["docs"]
+    commandAllowlist:
+      - go test ./evals/testdata/write-microtasks/multi
+    repeats: 1
+    prompt: >
+      Update the retry fixture as a small multi-file change. In
+      evals/testdata/write-microtasks/multi/config.go set
+      RetryLimit to 3 and make RetryLabel return exactly "retries enabled: 3".
+      In the adjacent
+      README.md replace the sentence about disabled retries with exactly
+      "Transient provider errors are retried up to 3 times." Inspect the
+      files first, keep all other content intact, then validate with exactly:
+      go test ./evals/testdata/write-microtasks/multi
+    eval:
+      require_completed: true
+      max_invalid_workflow_outputs: 1
+      max_invalid_outputs: 8
+      max_missing_required: 8
+      max_invalid_tool_proposals: 2
+      max_tool_execution_failures: 1
+      max_unrecovered_retries: 4
+      required_tools_executed:
+        - replace_text
+        - run_command
+      required_file_contains:
+        - path: evals/testdata/write-microtasks/multi/config.go
+          terms:
+            - RetryLimit = 3
+            - "retries enabled: 3"
+        - path: evals/testdata/write-microtasks/multi/README.md
+          terms:
+            - Transient provider errors are retried up to 3 times.

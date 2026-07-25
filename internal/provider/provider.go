@@ -1,0 +1,113 @@
+package provider
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/comalice/maelstrom/internal/prompt"
+	"github.com/comalice/maelstrom/internal/runtime"
+)
+
+type RequestLine struct {
+	Kind    string
+	Role    string
+	Name    string
+	Content string
+	CallID  string
+}
+
+type ToolDefinition struct {
+	Name        string
+	Description string
+	Parameters  map[string]string
+	Required    []string
+}
+
+type Request struct {
+	PayloadID      string
+	Provider       string
+	ModelRef       string
+	Lines          []RequestLine
+	Tools          []ToolDefinition
+	ResponseFormat *StructuredOutputFormat
+}
+
+type StructuredOutputFormat struct {
+	Name           string
+	RequiredFields []string
+	OptionalFields []string
+	FieldTypes     map[string]string
+	FieldEnums     map[string][]string
+	Strict         bool
+	// WrapBucket nests the schema under a single required top-level key
+	// (e.g. "cognitive"), matching finalization bucket validation.
+	WrapBucket string
+	// Buckets, when non-empty, supersedes the flat field spec and WrapBucket:
+	// each bucket's schema is nested under its named required top-level key,
+	// producing the combined wrapper shape
+	// {"cognitive": {...}, "workflow": {...}}.
+	Buckets []BucketFormat
+}
+
+// BucketFormat describes one named finalization bucket with its own contract.
+type BucketFormat struct {
+	Name           string
+	RequiredFields []string
+	OptionalFields []string
+	FieldTypes     map[string]string
+	FieldEnums     map[string][]string
+	Strict         bool
+}
+
+type Output interface{ output() }
+
+type AssistantOutput struct {
+	Content   string
+	Reasoning string
+}
+
+func (AssistantOutput) output() {}
+
+type ToolCall struct {
+	CallID    string
+	ToolName  string
+	Arguments map[string]string
+	RawArgs   json.RawMessage
+}
+
+type ToolRequestOutput struct {
+	Call ToolCall
+}
+
+func (ToolRequestOutput) output() {}
+
+type Response struct {
+	Outputs []Output
+}
+
+type Provider interface {
+	BuildRequest(agent runtime.Agent, payload prompt.Payload, tools []ToolDefinition) (Request, error)
+	Send(request Request) (Response, error)
+}
+
+func BuildRequest(agent runtime.Agent, payload prompt.Payload, tools []ToolDefinition) (Request, error) {
+	lines := make([]RequestLine, 0, len(payload.Segments))
+	for _, segment := range payload.Segments {
+		switch v := segment.(type) {
+		case prompt.PromptSegment:
+			line := RequestLine{Kind: "prompt", Role: v.Role, Name: v.Name, Content: v.Content, CallID: v.CallID}
+			lines = append(lines, line)
+		case prompt.StateSegment:
+			lines = append(lines, RequestLine{Kind: "state", Name: v.Name, Content: v.State})
+		default:
+			return Request{}, fmt.Errorf("unsupported segment type %T", segment)
+		}
+	}
+	return Request{
+		PayloadID: payload.PayloadID,
+		Provider:  agent.ProviderName,
+		ModelRef:  agent.ProviderRef,
+		Lines:     lines,
+		Tools:     append([]ToolDefinition(nil), tools...),
+	}, nil
+}
