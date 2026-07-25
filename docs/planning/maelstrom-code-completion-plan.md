@@ -1,14 +1,14 @@
 # Maelstrom Code Completion Plan
 
-**Status:** Active  
+**Status:** Active — Phases 1–5 complete; Phase 6 next
 **Date:** 2026-07-04  
-**Scope:** Complete the current `sketch/sketch7` runtime into a lean, highly functional local-model-first coding-agent harness, then promote it into the production `maelstrom-code` layout.
+**Scope:** Complete the runtime into a lean, highly functional local-model-first coding-agent harness and prove the first production experience. The whole-cloth promotion into `cmd/maelstrom`, `internal/`, and top-level definition/eval directories completed in Phase 5.
 
 ## Decisions already made
 
 These decisions are treated as settled for this plan.
 
-- **Current implementation line:** `sketch7` is the canonical seed, but it will be **promoted into a production package layout soon** rather than remaining permanently under `sketch/`.
+- **Current implementation line:** the former sketch7 seed is now the sole production runtime. Pre-promotion code is archived at Git tag `sketch-era-final`.
 - **Immediate optimization target:** the next major deliverable is the **eval harness + model battery**, not broad feature expansion.
 - **Serving target:** the harness should target a **llama.cpp / LM Studio style OpenAI-compatible endpoint**. In practice, the first battery may run primarily against **OpenRouter** because the local serving machine is unstable under long-lived model-service sessions.
 - **Write safety:** write-enabled autonomous repo work should be **strictly gated** behind readiness checks, disposable worktrees, and authoritative runtime limits.
@@ -209,7 +209,7 @@ This is a good baseline, but it does **not** complete the runtime semantics need
 
 ## Workstream status against the current core-completion plan
 
-The existing `docs/planning/sketch7-core-completion-plan.md` remains the main runtime implementation queue.
+The existing `docs/done/sketch7-core-completion-plan.md` remains the main runtime implementation queue.
 
 ### Workstream 1 — authoritative tool policy edge cases
 
@@ -607,6 +607,12 @@ Write-enabled autonomous runs do not start until these are true:
 
 ## Phase 5 — promote sketch7 into the production layout
 
+**Status: complete (2026-07-15).** The repository now has one runtime under
+`cmd/maelstrom` and `internal`, module `github.com/comalice/maelstrom`.
+Definitions and batteries live at top-level `agents/`, `workflows/`, `models/`,
+and `evals/`. Legacy commands, the old `internal/` line, and sketch6 were
+deleted after tagging the archive point as `sketch-era-final`.
+
 ### Goal
 
 Once the runtime fixes and eval harness are real, promote sketch7 into the actual product structure in one focused migration.
@@ -705,7 +711,7 @@ The next gains should come from:
 This document is the top-level execution guide.
 It should be read together with:
 
-- `docs/planning/sketch7-core-completion-plan.md` for the lower-level runtime queue,
+- `docs/done/sketch7-core-completion-plan.md` for the lower-level runtime queue,
 - `docs/planning/sketch7-cognitive-state-stress-test-plan.md` for the next read-only experiment matrix,
 - `docs/planning/minimal-eval-agent-and-metrics.md` for metric vocabulary and minimal eval-agent intent,
 - `docs/planning/state-scoped-io-contracts-rollout.md` and `state-contract-schema-draft.md` for the contract model,
@@ -714,17 +720,10 @@ It should be read together with:
 
 ## Immediate next moves
 
-If work begins from this plan today, the next concrete sequence should be:
+Phases 1–5 are complete. Continue with Phase 6:
 
-1. Commit the current sketch7 states-as-output-gates baseline.
-2. Fix envelope tool provenance.
-3. Implement `EffectiveToolPolicy`.
-4. Enforce `maxToolCalls` and `maxWallTimeSeconds`.
-5. Add `optionalFields` and state-specific strict validation.
-6. Extract parser/validator logic from `runner/loop.go`.
-7. Add the first Go eval-runner skeleton in `sketch/sketch7/evals`.
-8. Port the Python task deck into Go-native task definitions.
-9. Run the first read-only battery.
-10. Use those results to decide the next runtime/tool upgrades.
-
-That sequence keeps the work tightly coupled to reliability and avoids broadening the runtime before it earns it.
+1. prove the conversation-to-execution product flow on the promoted binary;
+2. tighten interrupt/resume behavior against that flow;
+3. separate command/product concerns from experiment-only CLI concerns;
+4. choose default coding agents and workflows from the recorded batteries;
+5. add stronger tools only where product-path evidence requires them.

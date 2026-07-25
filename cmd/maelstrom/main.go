@@ -23,7 +23,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "sketch7: %v\n", err)
+		fmt.Fprintf(os.Stderr, "maelstrom: %v\n", err)
 		os.Exit(1)
 	}
 }

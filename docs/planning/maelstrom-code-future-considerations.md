@@ -282,7 +282,7 @@ If the answer set is weak, defer the addition.
 This note is intentionally non-authoritative.
 
 - `docs/planning/maelstrom-code-completion-plan.md` remains the main execution plan.
-- `docs/planning/sketch7-core-completion-plan.md` remains the detailed runtime completion queue.
+- `docs/done/sketch7-core-completion-plan.md` remains the detailed runtime completion queue.
 
 This file is just the reminder to keep Maelstrom Code:
 

@@ -5,7 +5,7 @@ Date: 2026-07-10
 ## Scope
 
 This report closes the workflow stress test plan
-(`docs/planning/maelstrom-code-workflow-stress-test-plan.md`): Tier 1
+(`docs/done/maelstrom-code-workflow-stress-test-plan.md`): Tier 1
 (single-session workflow finalization under tight bounds) and Tier 2 (a
 four-stage agent relay against one persisted workflow instance). It answers:
 
