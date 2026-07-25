@@ -515,7 +515,7 @@ func recommendedChanges(stats logs.SessionStats) []ReportRecommendation {
 		changes = append(changes, ReportRecommendation{Severity: "high", Layer: "output_contract", Change: "tighten state output projection text and simplify required output fields in state contracts", Files: []string{"internal/prompt/projection.go", "internal/runner/loop.go", "internal/defs/workflow.go"}, Target: topKey(stats.Output.BySchema)})
 	}
 	if bucketFailureCount(stats.Output.ByValidationStatus) > 0 {
-		changes = append(changes, ReportRecommendation{Severity: "high", Layer: "output_buckets", Change: "clarify finalization-mode bucket requirements and keep wrapped cognitive/workflow outputs explicit in task framing", Files: []string{"internal/runner/output_eval.go", "internal/context/sections.go", "docs/planning/sketch7-core-completion-plan.md"}, Target: topBucketFailure(stats.Output.ByValidationStatus)})
+		changes = append(changes, ReportRecommendation{Severity: "high", Layer: "output_buckets", Change: "clarify finalization-mode bucket requirements and keep wrapped cognitive/workflow outputs explicit in task framing", Files: []string{"internal/runner/output_eval.go", "internal/context/sections.go", "docs/done/sketch7-core-completion-plan.md"}, Target: topBucketFailure(stats.Output.ByValidationStatus)})
 	}
 	if stats.Output.WrongState > 0 {
 		changes = append(changes, ReportRecommendation{Severity: "high", Layer: "state_projection", Change: "improve state-local prompt projection and validate state field more explicitly at the loop boundary", Files: []string{"internal/prompt/projection.go", "internal/runtime/reduce.go", "internal/runner/loop.go"}, Target: topFailingState(stats.ByState)})
@@ -536,7 +536,7 @@ func recommendedChanges(stats logs.SessionStats) []ReportRecommendation {
 		changes = append(changes, ReportRecommendation{Severity: "medium", Layer: "state_bounds", Change: "review state bounds and finalization thresholds so bounded exits are intentional rather than accidental", Files: []string{"internal/defs/workflow.go", "internal/runtime/reduce.go", "internal/runner/loop.go"}, Target: topBoundStop(stats.StopReasons)})
 	}
 	if len(changes) == 0 {
-		changes = append(changes, ReportRecommendation{Severity: "info", Layer: "eval", Change: "current session looks healthy; next step is to validate against broader eval tasks", Files: []string{"docs/evals.md", "docs/planning/state-scoped-io-contracts-rollout.md"}})
+		changes = append(changes, ReportRecommendation{Severity: "info", Layer: "eval", Change: "current session looks healthy; next step is to validate against broader eval tasks", Files: []string{"README.md", "evals/decks/", "docs/done/state-scoped-io-contracts-rollout.md"}})
 	}
 	return changes
 }
